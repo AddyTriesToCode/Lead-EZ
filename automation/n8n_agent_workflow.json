@@ -1,0 +1,187 @@
+{
+  "name": "Lead-EZ Agent Pipeline",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-interval",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "",
+      "credentials": {},
+      "notes": "Runs every 5 minutes to check for leads needing processing"
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8001/tools/get_stats",
+        "authentication": "none",
+        "method": "GET",
+        "options": {}
+      },
+      "id": "get-stats",
+      "name": "Get Pipeline Stats",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 300],
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "jsCode": "// Agent Decision Node\n// Examines lead/message status and decides which MCP endpoint to call\n\nconst items = $input.all();\nconst output = [];\n\nfor (const item of items) {\n  const leads = item.json.leads || {};\n  const messages = item.json.messages || {};\n  \n  // Decision logic based on status\n  let nextAction = null;\n  let endpoint = null;\n  let params = {};\n  \n  // Priority 1: Send approved messages\n  if (messages.APPROVED && messages.APPROVED > 0) {\n    nextAction = 'send_messages';\n    endpoint = 'http://localhost:8001/tools/send_messages';\n    params = { use_queue: true, batch_size: 50, dry_run: false };\n  }\n  // Priority 2: Review pending messages\n  else if (messages.PENDING && messages.PENDING > 0) {\n    nextAction = 'review_messages';\n    endpoint = 'http://localhost:8001/tools/review_messages';\n    params = { auto_approve: false, min_quality_score: 70 };\n  }\n  // Priority 3: Generate messages for enriched leads\n  else if (leads.ENRICHED && leads.ENRICHED > 0) {\n    nextAction = 'generate_messages';\n    endpoint = 'http://localhost:8001/tools/generate_messages';\n    params = { limit: 50 };\n  }\n  // Priority 4: Enrich generated leads\n  else if (leads.GENERATED && leads.GENERATED > 0) {\n    nextAction = 'enrich_leads';\n    endpoint = 'http://localhost:8001/tools/enrich_leads';\n    params = { mode: 'offline', limit: 50 };\n  }\n  // Priority 5: Generate new leads if needed\n  else if ((!leads.NEW || leads.NEW < 10) && (!leads.GENERATED || leads.GENERATED < 10)) {\n    nextAction = 'generate_leads';\n    endpoint = 'http://localhost:8001/tools/generate_leads';\n    params = { count: 100, save_to_db: true };\n  }\n  // No action needed\n  else {\n    nextAction = 'wait';\n    endpoint = null;\n  }\n  \n  output.push({\n    json: {\n      ...item.json,\n      agent_decision: {\n        action: nextAction,\n        endpoint: endpoint,\n        params: params,\n        timestamp: new Date().toISOString()\n      }\n    }\n  });\n}\n\nreturn output;"
+      },
+      "id": "agent-decision",
+      "name": "Agent Decision Node",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "notes": "Control node: decides which MCP tool to call based on status fields"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "action-wait",
+              "leftValue": "={{ $json.agent_decision.action }}",
+              "rightValue": "wait",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "should-wait",
+      "name": "Should Wait?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// No action needed, log and continue\nconst items = $input.all();\nreturn items.map(item => ({\n  json: {\n    status: 'waiting',\n    message: 'No leads need processing',\n    timestamp: new Date().toISOString()\n  }\n}));"
+      },
+      "id": "wait-node",
+      "name": "Wait - No Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 200],
+      "notes": "No leads need processing right now"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.agent_decision.endpoint }}",
+        "authentication": "none",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "={{ Object.keys($json.agent_decision.params) }}",
+              "value": "={{ Object.values($json.agent_decision.params) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "call-mcp-tool",
+      "name": "Call MCP Tool",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 400],
+      "notes": "Execute the chosen MCP endpoint"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log the result\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  console.log('MCP Tool Result:', JSON.stringify(item.json, null, 2));\n  results.push({\n    json: {\n      success: item.json.success || false,\n      action: item.json.action,\n      details: item.json,\n      timestamp: new Date().toISOString()\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "log-result",
+      "name": "Log Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 400]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Pipeline Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pipeline Stats": {
+      "main": [
+        [
+          {
+            "node": "Agent Decision Node",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent Decision Node": {
+      "main": [
+        [
+          {
+            "node": "Should Wait?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Wait?": {
+      "main": [
+        [
+          {
+            "node": "Wait - No Action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call MCP Tool",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call MCP Tool": {
+      "main": [
+        [
+          {
+            "node": "Log Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-01-08T00:00:00.000Z",
+  "versionId": "1"
+}
