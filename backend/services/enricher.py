@@ -291,7 +291,7 @@ You must respond with ONLY a valid JSON object, no other text. Use this exact fo
   "persona_tag": "descriptive persona",
   "pain_points": ["challenge1", "challenge2", "challenge3"],
   "buying_triggers": ["trigger1", "trigger2"],
-  "confidence_score": between 0 to 100 with company size bonus and Role seniority bonus
+  "confidence_score": start at 50 for all. Add points for seniority and larger company size. Subtract for the opposite. Lastly add or subtract a random value in range(10) for noise
 }}
 
 JSON response:"""
