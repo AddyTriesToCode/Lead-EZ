@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     max_retries: int = 2
     retry_delay_seconds: int = 2
     
+    # Message Generation
+    min_confidence_score: int = int(os.getenv("MIN_CONFIDENCE_SCORE", "55"))
+    
     # Pipeline defaults
     default_dry_run: bool = True
     dry_run: bool = True
