@@ -1,7 +1,9 @@
 import json
 import random
+import asyncio
 from pathlib import Path
 from typing import List, Dict, Optional
+import httpx
 from ..core.logger import logger
 from ..core.database import get_db_connection
 
@@ -176,14 +178,98 @@ class Enricher:
             "confidence_score": confidence_score
         }
     
+    async def enrich_lead_ai_async(self, lead: Dict, client: httpx.AsyncClient) -> Dict:
+        """Async AI enrichment for parallel processing."""
+        lead_id = lead.get("id", "unknown")
+        lead_name = lead.get("full_name", "unknown")
+        
+        try:
+            from ..core.config import settings
+            
+            if settings.llm_provider != "ollama":
+                logger.debug(f"LLM provider not ollama, using offline for {lead_name}")
+                offline_result = self.enrich_lead_offline(lead)
+                offline_result["lead_id"] = lead_id
+                return offline_result
+            
+            prompt = f"""Analyze this business lead and provide enrichment data:
+
+Company: {lead['company_name']}
+Role: {lead['role']}
+Industry: {lead['industry']}
+Country: {lead['country']}
+
+You must respond with ONLY a valid JSON object, no other text. Use this exact format:
+{{
+  "company_size": "small, medium or enterprise",
+  "persona_tag": "descriptive persona",
+  "pain_points": ["challenge1", "challenge2", "challenge3"],
+  "buying_triggers": ["trigger1", "trigger2"],
+  "confidence_score": between 0 to 100 based on how likely the user is to reply
+}}
+
+JSON response:"""
+
+            response = await client.post(
+                f"{settings.llm_base_url}/api/generate",
+                json={
+                    "model": settings.llm_model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "format": "json"
+                },
+                timeout=30.0
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                enrichment_text = result.get("response", "").strip()
+                
+                if "```json" in enrichment_text:
+                    enrichment_text = enrichment_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in enrichment_text:
+                    enrichment_text = enrichment_text.split("```")[1].split("```")[0].strip()
+                
+                enrichment_data = json.loads(enrichment_text)
+                
+                logger.debug(f"Successfully enriched {lead_name} with AI")
+                return {
+                    "lead_id": lead_id,
+                    "company_size": enrichment_data.get("company_size", "medium"),
+                    "persona_tag": enrichment_data.get("persona_tag", "Professional"),
+                    "pain_points": json.dumps(enrichment_data.get("pain_points", [])),
+                    "buying_triggers": json.dumps(enrichment_data.get("buying_triggers", [])),
+                    "confidence_score": enrichment_data.get("confidence_score", 50)
+                }
+            else:
+                logger.warning(f"Ollama returned {response.status_code} for {lead_name}, using offline")
+                offline_result = self.enrich_lead_offline(lead)
+                offline_result["lead_id"] = lead_id
+                return offline_result
+                
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout enriching {lead_name}, using offline fallback")
+            offline_result = self.enrich_lead_offline(lead)
+            offline_result["lead_id"] = lead_id
+            return offline_result
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error for {lead_name}: {e}, using offline fallback")
+            offline_result = self.enrich_lead_offline(lead)
+            offline_result["lead_id"] = lead_id
+            return offline_result
+        except Exception as e:
+            logger.error(f"AI enrichment failed for {lead_name}: {e}, using offline fallback")
+            offline_result = self.enrich_lead_offline(lead)
+            offline_result["lead_id"] = lead_id
+            return offline_result
+    
     def enrich_lead_ai(self, lead: Dict) -> Dict:
-        """Enrich a single lead using AI/LLM (optional).
+        """Enrich a single lead using AI/LLM (optional) - synchronous wrapper.
         
         This mode uses Ollama (local LLM) to generate more contextual insights.
         Falls back to offline mode if Ollama is not available.
         """
         try:
-            import httpx
             from ..core.config import settings
             
             # Check if Ollama is available
@@ -199,29 +285,41 @@ Role: {lead['role']}
 Industry: {lead['industry']}
 Country: {lead['country']}
 
-Provide a JSON response with:
-1. company_size: small, medium, or enterprise
-2. persona_tag: A descriptive persona (e.g., "Tech Visionary")
-3. pain_points: Array of 2-3 specific business challenges
-4. buying_triggers: Array of 1-2 events that might trigger a purchase
-5. confidence_score: 0-100 score for lead quality
+You must respond with ONLY a valid JSON object, no other text. Use this exact format:
+{{
+  "company_size": "small, medium or enterprise",
+  "persona_tag": "descriptive persona",
+  "pain_points": ["challenge1", "challenge2", "challenge3"],
+  "buying_triggers": ["trigger1", "trigger2"],
+  "confidence_score": between 0 to 100 with company size bonus and Role seniority bonus
+}}
 
-Respond with only valid JSON."""
+JSON response:"""
 
             # Call Ollama
             response = httpx.post(
-                f"{settings.ollama_host}/api/generate",
+                f"{settings.llm_base_url}/api/generate",
                 json={
                     "model": settings.llm_model,
                     "prompt": prompt,
-                    "stream": False
+                    "stream": False,
+                    "format": "json"
                 },
                 timeout=30.0
             )
             
             if response.status_code == 200:
                 result = response.json()
-                enrichment_text = result.get("response", "")
+                enrichment_text = result.get("response", "").strip()
+                
+                # Log the raw response for debugging
+                logger.debug(f"LLM response: {enrichment_text[:200]}")
+                
+                # Try to extract JSON if wrapped in markdown or text
+                if "```json" in enrichment_text:
+                    enrichment_text = enrichment_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in enrichment_text:
+                    enrichment_text = enrichment_text.split("```")[1].split("```")[0].strip()
                 
                 # Parse JSON from response
                 enrichment_data = json.loads(enrichment_text)
@@ -241,6 +339,26 @@ Respond with only valid JSON."""
         except Exception as e:
             logger.error(f"AI enrichment failed: {e}, falling back to offline mode")
             return self.enrich_lead_offline(lead)
+    
+    async def _enrich_batch_async(self, leads: List[Dict]) -> List[Dict]:
+        """Process a batch of leads concurrently using async."""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            tasks = [self.enrich_lead_ai_async(lead, client) for lead in leads]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Handle any exceptions that weren't caught
+            processed_results = []
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.error(f"Batch task {i} failed with exception: {result}")
+                    # Fallback to offline for this lead
+                    offline_result = self.enrich_lead_offline(leads[i])
+                    offline_result["lead_id"] = leads[i]["id"]
+                    processed_results.append(offline_result)
+                else:
+                    processed_results.append(result)
+            
+            return processed_results
     
     def enrich_leads(self, lead_ids: Optional[List[str]] = None, limit: Optional[int] = None) -> Dict:
         """Enrich multiple leads.
@@ -288,52 +406,74 @@ Respond with only valid JSON."""
             failed_count = 0
             enriched_leads = []
             
-            for lead in leads:
-                try:
-                    lead_dict = dict(lead)
-                    
-                    # Enrich based on mode
-                    if self.mode == "ai":
-                        enrichment = self.enrich_lead_ai(lead_dict)
-                    else:
-                        enrichment = self.enrich_lead_offline(lead_dict)
-                    
-                    # Update database
-                    cursor.execute("""
-                        UPDATE leads
-                        SET company_size = ?,
-                            persona_tag = ?,
-                            pain_points = ?,
-                            buying_triggers = ?,
-                            confidence_score = ?,
-                            status = 'ENRICHED',
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
-                    """, (
-                        enrichment["company_size"],
-                        enrichment["persona_tag"],
-                        enrichment["pain_points"],
-                        enrichment["buying_triggers"],
-                        enrichment["confidence_score"],
-                        lead_dict["id"]
-                    ))
-                    
-                    enriched_count += 1
-                    enriched_leads.append({
-                        "id": lead_dict["id"],
-                        "name": lead_dict["full_name"],
-                        "company": lead_dict["company_name"],
-                        **enrichment
-                    })
-                    
-                    if enriched_count % 50 == 0:
-                        logger.info(f"Enriched {enriched_count}/{len(leads)} leads")
-                        
-                except Exception as e:
-                    logger.error(f"Error enriching lead {lead['id']}: {e}")
-                    failed_count += 1
+            # Process in batches for better performance
+            # Smaller batch size to avoid overwhelming Ollama
+            batch_size = 5 if self.mode == "ai" else 50
             
-            conn.commit()
+            logger.info(f"Processing in batches of {batch_size}...")
+            
+            for batch_start in range(0, len(leads), batch_size):
+                batch = leads[batch_start:batch_start + batch_size]
+                batch_dicts = [dict(lead) for lead in batch]
+                
+                # Enrich batch
+                if self.mode == "ai":
+                    # Process batch in parallel with async
+                    batch_enrichments = asyncio.run(self._enrich_batch_async(batch_dicts))
+                else:
+                    # Sequential for offline mode
+                    batch_enrichments = [self.enrich_lead_offline(lead) for lead in batch_dicts]
+                
+                # Update database
+                for lead_dict, enrichment in zip(batch_dicts, batch_enrichments):
+                    try:
+                        lead_id = lead_dict["id"]
+                        
+                        # Verify enrichment has required fields
+                        if not all(k in enrichment for k in ["company_size", "persona_tag", "pain_points", "buying_triggers", "confidence_score"]):
+                            logger.error(f"Incomplete enrichment data for {lead_id}: {enrichment.keys()}")
+                            failed_count += 1
+                            continue
+                        
+                        cursor.execute("""
+                            UPDATE leads
+                            SET company_size = ?,
+                                persona_tag = ?,
+                                pain_points = ?,
+                                buying_triggers = ?,
+                                confidence_score = ?,
+                                status = 'ENRICHED',
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                        """, (
+                            enrichment["company_size"],
+                            enrichment["persona_tag"],
+                            enrichment["pain_points"],
+                            enrichment["buying_triggers"],
+                            enrichment["confidence_score"],
+                            lead_id
+                        ))
+                        
+                        if cursor.rowcount == 0:
+                            logger.warning(f"No rows updated for lead {lead_id}")
+                        
+                        enriched_count += 1
+                        enriched_leads.append({
+                            "id": lead_id,
+                            "name": lead_dict["full_name"],
+                            "company": lead_dict["company_name"],
+                            "company_size": enrichment["company_size"],
+                            "persona_tag": enrichment["persona_tag"],
+                            "confidence_score": enrichment["confidence_score"]
+                        })
+                        
+                    except Exception as e:
+                        logger.error(f"Error updating lead {lead_dict.get('id', 'unknown')}: {e}", exc_info=True)
+                        failed_count += 1
+                
+                conn.commit()
+                logger.info(f"Enriched {enriched_count}/{len(leads)} leads")
+            
             logger.info(f"Enrichment complete: {enriched_count} enriched, {failed_count} failed")
             
             return {

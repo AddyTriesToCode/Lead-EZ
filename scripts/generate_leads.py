@@ -15,16 +15,31 @@ from backend.core.logger import logger
 
 def main():
     """Generate leads and save to database."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Generate leads using Faker")
+    parser.add_argument("-s", "--seed", type=int, default=None,
+                        help="Random seed (default: 15 from config)")
+    parser.add_argument("-n", "--count", type=int, default=None,
+                        help="Number of leads to generate (default: 200 from config)")
+    
+    args = parser.parse_args()
+    
+    # Use CLI args if provided, otherwise use settings
+    seed = args.seed if args.seed is not None else settings.random_seed
+    count = args.count if args.count is not None else settings.lead_count
+    
     logger.info("=" * 50)
     logger.info("Lead Generation Script")
-    logger.info(f"Using seed: {settings.random_seed}")
+    logger.info(f"Using seed: {seed}")
+    logger.info(f"Generating: {count} leads")
     logger.info("=" * 50)
     
     # Initialize generator
-    generator = LeadGenerator(seed=settings.random_seed)
+    generator = LeadGenerator(seed=seed)
     
     # Generate and save leads
-    result = generator.generate_and_save(count=settings.lead_count)
+    result = generator.generate_and_save(count=count)
     
     logger.info("\n" + "=" * 50)
     logger.info("Summary:")
