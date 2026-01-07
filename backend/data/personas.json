@@ -1,0 +1,65 @@
+{
+  "Technology": {
+    "CTO": { "persona": "Tech Visionary", "seniority": "C-level" },
+    "VP Engineering": { "persona": "Engineering Leader", "seniority": "VP" },
+    "Head of IT": { "persona": "IT Operations Head", "seniority": "Director" },
+    "Data Leader": { "persona": "Data & Analytics Leader", "seniority": "VP" },
+    "DevOps Manager": { "persona": "Infrastructure Manager", "seniority": "Manager" }
+  },
+  "Healthcare": {
+    "Chief Medical Officer": { "persona": "Clinical Leadership", "seniority": "C-level" },
+    "Hospital Administrator": { "persona": "Healthcare Operations Head", "seniority": "VP" },
+    "Director of Operations": { "persona": "Healthcare Operations Director", "seniority": "Director" },
+    "VP Patient Care": { "persona": "Patient Experience Leader", "seniority": "VP" }
+  },
+  "Finance": {
+    "CFO": { "persona": "Financial Leadership", "seniority": "C-level" },
+    "VP Finance": { "persona": "Finance Operations Leader", "seniority": "VP" },
+    "Treasury Director": { "persona": "Treasury & Risk Head", "seniority": "Director" },
+    "Risk Management Head": { "persona": "Risk & Compliance Leader", "seniority": "Director" },
+    "Compliance Officer": { "persona": "Regulatory Compliance Head", "seniority": "Manager" }
+  },
+  "Manufacturing": {
+    "VP Operations": { "persona": "Manufacturing Operations Leader", "seniority": "VP" },
+    "Supply Chain Director": { "persona": "Supply Chain Leader", "seniority": "Director" },
+    "Production Manager": { "persona": "Production Operations Manager", "seniority": "Manager" },
+    "Procurement Head": { "persona": "Procurement Leader", "seniority": "Director" }
+  },
+  "Retail": {
+    "VP Merchandising": { "persona": "Retail Strategy Leader", "seniority": "VP" },
+    "Store Operations Director": { "persona": "Store Operations Head", "seniority": "Director" },
+    "Head of E-commerce": { "persona": "Digital Commerce Leader", "seniority": "VP" },
+    "Inventory Manager": { "persona": "Inventory Operations Manager", "seniority": "Manager" }
+  },
+  "Education": {
+    "Dean": { "persona": "Academic Leadership", "seniority": "C-level" },
+    "VP Academic Affairs": { "persona": "Academic Operations Leader", "seniority": "VP" },
+    "Director of IT": { "persona": "Education Technology Head", "seniority": "Director" },
+    "Enrollment Director": { "persona": "Student Enrollment Leader", "seniority": "Director" }
+  },
+  "Real Estate": {
+    "VP Property Management": { "persona": "Property Operations Leader", "seniority": "VP" },
+    "Development Director": { "persona": "Real Estate Development Head", "seniority": "Director" },
+    "Asset Manager": { "persona": "Real Estate Asset Manager", "seniority": "Manager" },
+    "Leasing Director": { "persona": "Leasing Operations Head", "seniority": "Director" }
+  },
+  "Logistics": {
+    "VP Supply Chain": { "persona": "Supply Chain Leader", "seniority": "VP" },
+    "Logistics Manager": { "persona": "Logistics Operations Manager", "seniority": "Manager" },
+    "Warehouse Director": { "persona": "Warehouse Operations Head", "seniority": "Director" },
+    "Transportation Head": { "persona": "Transportation Operations Leader", "seniority": "Director" }
+  },
+  "Marketing": {
+    "CMO": { "persona": "Marketing Leadership", "seniority": "C-level" },
+    "VP Marketing": { "persona": "Marketing Strategy Leader", "seniority": "VP" },
+    "Head of Digital": { "persona": "Digital Marketing Leader", "seniority": "Director" },
+    "Brand Director": { "persona": "Brand Strategy Head", "seniority": "Director" },
+    "Marketing Operations Manager": { "persona": "Marketing Ops Manager", "seniority": "Manager" }
+  },
+  "Construction": {
+    "Project Manager": { "persona": "Construction Project Manager", "seniority": "Manager" },
+    "VP Construction": { "persona": "Construction Operations Leader", "seniority": "VP" },
+    "Site Director": { "persona": "Construction Site Head", "seniority": "Director" },
+    "Estimating Director": { "persona": "Cost Estimation Leader", "seniority": "Director" }
+  }
+}

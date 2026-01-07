@@ -1,0 +1,72 @@
+{
+  "Technology": [
+    "Recent funding round or expansion announcement",
+    "Cloud migration or digital transformation initiative",
+    "New executive hire in technology leadership",
+    "Security breach or compliance deadline approaching",
+    "Legacy system end-of-life or vendor changes"
+  ],
+  "Healthcare": [
+    "New facility opening or expansion plans",
+    "Regulatory audit or accreditation renewal upcoming",
+    "Patient satisfaction scores declining",
+    "EMR system upgrade or vendor transition",
+    "Telehealth expansion or new service line launch"
+  ],
+  "Finance": [
+    "Regulatory changes requiring system updates",
+    "Merger or acquisition integration",
+    "New product launch or market expansion",
+    "Audit findings requiring remediation",
+    "Digital banking transformation initiative"
+  ],
+  "Manufacturing": [
+    "New production facility or capacity expansion",
+    "Supply chain disruption requiring new vendors",
+    "Quality issues or product recalls",
+    "Sustainability goals or ESG reporting requirements",
+    "Automation or Industry 4.0 initiative"
+  ],
+  "Retail": [
+    "New store openings or market expansion",
+    "E-commerce platform upgrade or launch",
+    "Peak season preparation (holidays, back-to-school)",
+    "Competitive pressure or market share decline",
+    "Loyalty program enhancement or customer retention focus"
+  ],
+  "Education": [
+    "Enrollment period or recruitment campaign",
+    "New academic program launch",
+    "Campus infrastructure upgrade or expansion",
+    "Accreditation review or compliance deadline",
+    "Technology refresh cycle or LMS upgrade"
+  ],
+  "Real Estate": [
+    "New development project announced",
+    "Portfolio acquisition or divestiture",
+    "Market downturn requiring cost optimization",
+    "Lease renewal period for major tenants",
+    "Property management system upgrade"
+  ],
+  "Logistics": [
+    "Peak shipping season approaching",
+    "Warehouse expansion or new distribution center",
+    "Carrier contract renegotiation period",
+    "E-commerce volume surge requiring scalability",
+    "Sustainability initiative or fleet electrification"
+  ],
+  "Marketing": [
+    "New product launch or rebranding initiative",
+    "Budget planning cycle or fiscal year start",
+    "Marketing technology stack consolidation",
+    "Campaign performance below targets",
+    "Market expansion or new customer segment targeting"
+  ],
+  "Construction": [
+    "New project bid or contract award",
+    "Regulatory changes affecting building codes",
+    "Labor shortage requiring efficiency improvements",
+    "Material cost inflation requiring cost controls",
+    "Safety incident requiring process improvements"
+  ]
+}

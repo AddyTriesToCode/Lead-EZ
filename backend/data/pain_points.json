@@ -1,0 +1,72 @@
+{
+  "Technology": [
+    "Managing complex cloud infrastructure costs and optimization",
+    "Ensuring cybersecurity and data protection compliance",
+    "Scaling engineering teams while maintaining code quality",
+    "Legacy system modernization and technical debt reduction",
+    "DevOps workflow automation and CI/CD pipeline optimization"
+  ],
+  "Healthcare": [
+    "Patient data security and HIPAA compliance requirements",
+    "Reducing operational costs while improving patient care quality",
+    "Managing staff scheduling and resource allocation efficiently",
+    "Integrating disparate healthcare IT systems and EMR platforms",
+    "Meeting regulatory compliance and accreditation standards"
+  ],
+  "Finance": [
+    "Regulatory compliance and audit trail management",
+    "Real-time fraud detection and risk assessment",
+    "Optimizing cash flow and treasury operations",
+    "Financial reporting automation and accuracy",
+    "Managing complex multi-currency transactions and reconciliation"
+  ],
+  "Manufacturing": [
+    "Supply chain disruptions and inventory optimization",
+    "Equipment downtime and predictive maintenance challenges",
+    "Quality control and defect reduction in production",
+    "Meeting sustainability and environmental compliance goals",
+    "Managing complex procurement and vendor relationships"
+  ],
+  "Retail": [
+    "Inventory management across multiple channels and locations",
+    "Customer experience optimization and personalization",
+    "Omnichannel integration and unified commerce platforms",
+    "Managing seasonal demand fluctuations and forecasting",
+    "Reducing shrinkage and theft while maintaining margins"
+  ],
+  "Education": [
+    "Student enrollment and retention challenges",
+    "Budget constraints and resource allocation optimization",
+    "Technology infrastructure for remote and hybrid learning",
+    "Data security and student privacy compliance (FERPA)",
+    "Faculty recruitment and professional development"
+  ],
+  "Real Estate": [
+    "Property valuation accuracy and market analysis",
+    "Tenant acquisition and retention in competitive markets",
+    "Building maintenance and operational cost management",
+    "Regulatory compliance and zoning requirements",
+    "Portfolio diversification and investment risk management"
+  ],
+  "Logistics": [
+    "Last-mile delivery optimization and cost reduction",
+    "Real-time shipment tracking and visibility across supply chain",
+    "Warehouse space utilization and automation",
+    "Managing carrier relationships and rate negotiations",
+    "Route optimization and fuel cost management"
+  ],
+  "Marketing": [
+    "Measuring ROI and attribution across multiple channels",
+    "Lead generation quality and conversion rate optimization",
+    "Marketing automation and campaign orchestration",
+    "Brand consistency across digital and traditional channels",
+    "Customer data unification and segmentation challenges"
+  ],
+  "Construction": [
+    "Project delays and timeline management",
+    "Budget overruns and cost estimation accuracy",
+    "Material procurement and supply chain coordination",
+    "Worker safety compliance and incident prevention",
+    "Managing subcontractor relationships and quality control"
+  ]
+}
