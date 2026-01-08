@@ -18,8 +18,6 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import uvicorn
 from datetime import datetime
-import dotenv
-import os
 from ..core.logger import logger
 from ..core.config import settings
 from ..core.database import get_db_connection
@@ -31,13 +29,15 @@ from ..models.lead import Lead
 from ..agent.decision_engine import AgentDecisionEngine
 
 
+
 # ============================================================================
 # REQUEST MODELS
 # ============================================================================
 
 class GenerateLeadsRequest(BaseModel):
-    count: int = 100
+    count: int = 200
     save_to_db: bool = True
+    seed: Optional[int] = 42  # Reproducible random seed
 
 
 class EnrichLeadsRequest(BaseModel):
@@ -48,14 +48,12 @@ class EnrichLeadsRequest(BaseModel):
 
 class GenerateMessagesRequest(BaseModel):
     lead_ids: Optional[List[str]] = None
-    limit: Optional[int] = None
-    min_confidence_score: int = os.getenv("MIN_CONFIDENCE_SCORE")  # Only generate messages for leads with confidence > threshold
+    limit: Optional[int] = None  # None = no limit (process all matching leads)
+    min_confidence_score: int = 60 
 
 
 class ReviewMessagesRequest(BaseModel):
     message_ids: Optional[List[str]] = None
-    auto_approve: bool = False
-    min_quality_score: int = 70
 
 
 class SendMessagesRequest(BaseModel):
@@ -139,6 +137,12 @@ async def list_tools():
                 "endpoint": "/tools/get_stats",
                 "method": "GET",
                 "description": "Get pipeline statistics"
+            },
+            {
+                "name": "get_leads",
+                "endpoint": "/leads",
+                "method": "GET",
+                "description": "Get paginated list of leads with filters"
             }
         ]
     }
@@ -148,9 +152,9 @@ async def list_tools():
 async def generate_leads(request: GenerateLeadsRequest):
     """Generate new leads."""
     try:
-        logger.info(f"MCP Tool: generate_leads (count={request.count})")
+        logger.info(f"MCP Tool: generate_leads (count={request.count}, seed={request.seed})")
         
-        generator = LeadGenerator()
+        generator = LeadGenerator(seed=request.seed)
         
         if request.save_to_db:
             result = generator.generate_and_save(request.count)
@@ -183,7 +187,7 @@ async def enrich_leads(request: EnrichLeadsRequest):
         logger.info(f"MCP Tool: enrich_leads (mode={request.mode})")
         
         enricher = Enricher(mode=request.mode)
-        result = enricher.enrich_leads(
+        result = await enricher.enrich_leads(
             lead_ids=request.lead_ids,
             limit=request.limit
         )
@@ -274,10 +278,8 @@ async def generate_messages(request: GenerateMessagesRequest):
                         VALUES (?, ?, ?, ?, ?, 'PENDING')
                     """, (msg_id, lead.id, msg["channel"], msg["variant"], msg["content"]))
                 
-                # Update lead status
-                cursor.execute("""
-                    UPDATE leads SET status = 'MESSAGED' WHERE id = ?
-                """, (lead.id,))
+                # Keep lead status as ENRICHED (will change to SENT only in live mode)
+                # No status update here - stays ENRICHED until actually sent
                 
                 conn.commit()
                 total_generated += len(messages)
@@ -299,9 +301,12 @@ async def generate_messages(request: GenerateMessagesRequest):
 
 @app.post("/tools/review_messages")
 async def review_messages(request: ReviewMessagesRequest):
-    """Review messages and approve/reject them."""
+    """Review messages and approve/reject them.
+    
+    Randomly selects one variant (A or B) per channel for each lead.
+    """
     try:
-        logger.info(f"MCP Tool: review_messages (auto_approve={request.auto_approve})")
+        logger.info("MCP Tool: review_messages")
         
         # Fetch pending messages
         with get_db_connection() as conn:
@@ -322,48 +327,38 @@ async def review_messages(request: ReviewMessagesRequest):
             cursor.execute(query, params)
             messages = cursor.fetchall()
         
+        # Group messages by (lead_id, channel) for variant selection
+        grouped = {}
+        for msg in messages:
+            key = (msg["lead_id"], msg["channel"])
+            if key not in grouped:
+                grouped[key] = []
+            grouped[key].append(dict(msg))
+        
         approved = 0
         rejected = 0
         
-        # Review logic
-        for msg in messages:
-            if request.auto_approve:
-                # Auto-approve all
-                quality_score = 100
-                approved += 1
-                new_status = "APPROVED"
-            else:
-                # Simple quality checks
-                content = msg["content"]
-                word_count = len(content.split())
-                
-                # Check word limits
-                if msg["channel"] == "email" and word_count > 120:
-                    quality_score = 50
-                elif msg["channel"] == "linkedin" and word_count > 60:
-                    quality_score = 50
-                else:
-                    quality_score = 80
-                
-                # Check for CTA
-                if any(cta in content.lower() for cta in ["call", "chat", "discuss", "connect"]):
-                    quality_score += 10
-                
-                # Decide
-                if quality_score >= request.min_quality_score:
-                    approved += 1
-                    new_status = "APPROVED"
-                else:
-                    rejected += 1
-                    new_status = "REJECTED"
+        # Randomly pick one variant per channel
+        import random
+        for (lead_id, channel), variants in grouped.items():
+            # Randomly select one variant to approve
+            selected_variant = random.choice(variants)
             
-            # Update status
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE messages SET status = ? WHERE id = ?
-                """, (new_status, msg["id"]))
-                conn.commit()
+            for msg in variants:
+                if msg["id"] == selected_variant["id"]:
+                    new_status = "APPROVED"
+                    approved += 1
+                    logger.info(f"✓ Approved variant {msg['variant']} for {channel}")
+                else:
+                    new_status = "REJECTED"
+                    rejected += 1
+                    logger.debug(f"✗ Rejected variant {msg['variant']} for {channel}")
+                
+                with get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE messages SET status = ? WHERE id = ?", 
+                                 (new_status, msg["id"]))
+                    conn.commit()
         
         return {
             "success": True,
@@ -395,18 +390,13 @@ async def send_messages(request: SendMessagesRequest):
             # Fetch batch into queue
             fetched = queue.fetch_batch(status="APPROVED")
             
-            # Mock sender function
-            async def mock_sender(message: Dict) -> bool:
-                """Simulate sending (replace with actual email/LinkedIn logic)."""
-                logger.info(f"Sending {message['channel']} to {message['lead_name']}")
-                return True
-            
-            # Process queue
-            result = await queue.process_with_rate_limit(mock_sender, dry_run=request.dry_run)
+            # Process queue with appropriate mode (dry_run or live)
+            result = await queue.process_with_rate_limit(dry_run=request.dry_run)
             
             return {
                 "success": True,
                 "action": "send_messages",
+                "mode": "dry_run" if request.dry_run else "live",
                 "sent": result["sent"],
                 "failed": result["failed"],
                 "elapsed_seconds": result["elapsed_seconds"],
@@ -448,6 +438,69 @@ async def agent_decide(request: AgentDecisionRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/leads")
+async def get_leads(
+    status: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    sort_by: str = "created_at",
+    sort_order: str = "DESC"
+):
+    """Get paginated list of leads with filters."""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Build query
+            query = "SELECT * FROM leads WHERE 1=1"
+            params = []
+            
+            if status:
+                query += " AND status = ?"
+                params.append(status)
+            
+            # Add sorting
+            allowed_sort_fields = ["created_at", "updated_at", "confidence_score", "full_name"]
+            if sort_by not in allowed_sort_fields:
+                sort_by = "created_at"
+            
+            sort_order = "DESC" if sort_order.upper() == "DESC" else "ASC"
+            query += f" ORDER BY {sort_by} {sort_order}"
+            
+            # Add pagination
+            query += " LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            
+            cursor.execute(query, params)
+            leads = [dict(row) for row in cursor.fetchall()]
+            
+            # Get total count
+            count_query = "SELECT COUNT(*) as total FROM leads WHERE 1=1"
+            count_params = []
+            if status:
+                count_query += " AND status = ?"
+                count_params.append(status)
+            
+            cursor.execute(count_query, count_params)
+            total = cursor.fetchone()["total"]
+        
+        return {
+            "success": True,
+            "leads": leads,
+            "pagination": {
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "has_more": (offset + len(leads)) < total
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    except Exception as e:
+        logger.error(f"Error in get_leads: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/tools/get_stats")
 async def get_stats():
     """Get pipeline statistics."""
@@ -455,13 +508,29 @@ async def get_stats():
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            # Lead stats
+            # Lead stats with counts
             cursor.execute("SELECT status, COUNT(*) as count FROM leads GROUP BY status")
             lead_stats = {row["status"]: row["count"] for row in cursor.fetchall()}
             
-            # Message stats
+            # Total leads
+            cursor.execute("SELECT COUNT(*) as total FROM leads")
+            total_leads = cursor.fetchone()["total"]
+            
+            # Message stats with counts
             cursor.execute("SELECT status, COUNT(*) as count FROM messages GROUP BY status")
             message_stats = {row["status"]: row["count"] for row in cursor.fetchall()}
+            
+            # Total messages
+            cursor.execute("SELECT COUNT(*) as total FROM messages")
+            total_messages = cursor.fetchone()["total"]
+            
+            # Recent activity - last updated lead
+            cursor.execute("""
+                SELECT updated_at, status FROM leads 
+                WHERE updated_at IS NOT NULL 
+                ORDER BY updated_at DESC LIMIT 1
+            """)
+            last_lead_update = cursor.fetchone()
             
             # Queue stats
             queue = get_message_queue()
@@ -469,9 +538,21 @@ async def get_stats():
         
         return {
             "success": True,
+            "summary": {
+                "total_leads": total_leads,
+                "leads_enriched": lead_stats.get("ENRICHED", 0),
+                "total_messages": total_messages,
+                "messages_sent": message_stats.get("SENT", 0),
+                "messages_failed": message_stats.get("FAILED", 0),
+                "messages_pending": message_stats.get("PENDING", 0)
+            },
             "leads": lead_stats,
             "messages": message_stats,
             "queue": queue_stats,
+            "last_activity": {
+                "timestamp": last_lead_update["updated_at"] if last_lead_update else None,
+                "status": last_lead_update["status"] if last_lead_update else None
+            },
             "timestamp": datetime.now().isoformat()
         }
     

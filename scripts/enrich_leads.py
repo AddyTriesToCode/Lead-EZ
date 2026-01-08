@@ -2,6 +2,7 @@
 """Script to enrich leads with company size, personas, pain points, and triggers."""
 
 import sys
+import asyncio
 from pathlib import Path
 
 # Add project root to path
@@ -12,7 +13,7 @@ from backend.services.enricher import Enricher
 from backend.core.logger import logger
 
 
-def main():
+async def main():
     """Enrich leads."""
     import argparse
     
@@ -32,8 +33,8 @@ def main():
     # Initialize enricher
     enricher = Enricher(mode=args.mode)
     
-    # Enrich leads
-    result = enricher.enrich_leads(limit=args.limit)
+    # Enrich leads (now async)
+    result = await enricher.enrich_leads(limit=args.limit)
     
     logger.info("\n" + "=" * 50)
     logger.info("Enrichment Summary:")
@@ -52,4 +53,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

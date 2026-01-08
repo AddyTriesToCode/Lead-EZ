@@ -287,8 +287,8 @@ Country: {lead['country']}
 
 You must respond with ONLY a valid JSON object, no other text. Use this exact format:
 {{
-  "company_size": "small, medium or enterprise",
-  "persona_tag": "descriptive persona",
+  "company_size": "small, medium or enterprise based on the company suffix",
+  "persona_tag": "descriptive persona based on role and industry in max 3 words",
   "pain_points": ["challenge1", "challenge2", "challenge3"],
   "buying_triggers": ["trigger1", "trigger2"],
   "confidence_score": start at 50 for all. Add points for seniority and larger company size. Subtract for the opposite. Lastly add or subtract a random value in range(10) for noise
@@ -360,7 +360,7 @@ JSON response:"""
             
             return processed_results
     
-    def enrich_leads(self, lead_ids: Optional[List[str]] = None, limit: Optional[int] = None) -> Dict:
+    async def enrich_leads(self, lead_ids: Optional[List[str]] = None, limit: Optional[int] = None) -> Dict:
         """Enrich multiple leads.
         
         Args:
@@ -408,7 +408,7 @@ JSON response:"""
             
             # Process in batches for better performance
             # Smaller batch size to avoid overwhelming Ollama
-            batch_size = 5 if self.mode == "ai" else 50
+            batch_size = 20 if self.mode == "ai" else 50
             
             logger.info(f"Processing in batches of {batch_size}...")
             
@@ -419,7 +419,7 @@ JSON response:"""
                 # Enrich batch
                 if self.mode == "ai":
                     # Process batch in parallel with async
-                    batch_enrichments = asyncio.run(self._enrich_batch_async(batch_dicts))
+                    batch_enrichments = await self._enrich_batch_async(batch_dicts)
                 else:
                     # Sequential for offline mode
                     batch_enrichments = [self.enrich_lead_offline(lead) for lead in batch_dicts]

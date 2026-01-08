@@ -7,6 +7,7 @@ from datetime import datetime
 from ..core.logger import logger
 from ..core.database import get_db_connection
 from ..core.config import settings
+from .message_sender import create_sender
 
 
 class MessageQueue:
@@ -123,12 +124,11 @@ class MessageQueue:
             return self.fetch_batch()
         return 0
     
-    async def process_with_rate_limit(self, sender_func, dry_run: bool = True) -> Dict:
+    async def process_with_rate_limit(self, dry_run: bool = True) -> Dict:
         """Process messages from queue with rate limiting.
         
         Args:
-            sender_func: Async function that sends a message (takes message dict)
-            dry_run: If True, simulate sending without actual delivery
+            dry_run: If True, save to storage. If False, actually send via SMTP.
             
         Returns:
             Processing statistics
@@ -138,10 +138,14 @@ class MessageQueue:
         failed = 0
         start_time = time.time()
         
+        # Create sender with appropriate mode
+        sender = create_sender(dry_run=dry_run)
+        
         # Calculate delay between messages for rate limiting
         delay_seconds = 60.0 / self.max_per_minute
         
-        logger.info(f"Starting message processing (rate: {self.max_per_minute}/min, delay: {delay_seconds:.2f}s)")
+        mode = "DRY RUN (saving to storage)" if dry_run else "LIVE (sending via SMTP)"
+        logger.info(f"Starting message processing in {mode} (rate: {self.max_per_minute}/min, delay: {delay_seconds:.2f}s)")
         
         try:
             while not self.is_empty():
@@ -153,19 +157,27 @@ class MessageQueue:
                     break
                 
                 try:
-                    # Send message (or simulate)
-                    if dry_run:
-                        logger.info(f"[DRY RUN] Would send {message['channel']} to {message['lead_name']}")
-                        success = True
-                    else:
-                        success = await sender_func(message)
+                    # Send message using sender module
+                    success = await sender.send_message(message)
                     
-                    # Update database
-                    self._update_message_status(
-                        message["id"],
-                        "SENT" if success else "FAILED",
-                        error=None if success else "Delivery failed"
-                    )
+                    # Update message status (keep APPROVED in dry run mode)
+                    if dry_run:
+                        # In dry run mode, keep messages as APPROVED (don't change status)
+                        if success:
+                            logger.info(f"[DRY RUN] Message {message['id']} saved to storage, keeping status=APPROVED")
+                        else:
+                            self._update_message_status(message["id"], "FAILED", error="Dry run save failed")
+                    else:
+                        # In live mode, update status to SENT or FAILED
+                        self._update_message_status(
+                            message["id"],
+                            "SENT" if success else "FAILED",
+                            error=None if success else "Delivery failed"
+                        )
+                        
+                        # Update lead status to SENT after first successful message (live mode only)
+                        if success:
+                            self._update_lead_status(message["lead_id"], "SENT")
                     
                     if success:
                         sent += 1
@@ -219,6 +231,21 @@ class MessageQueue:
                 
         except Exception as e:
             logger.error(f"Error updating message status: {e}")
+    
+    def _update_lead_status(self, lead_id: str, status: str):
+        """Update lead status in database after sending messages."""
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE leads 
+                    SET status = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (status, lead_id))
+                conn.commit()
+                
+        except Exception as e:
+            logger.error(f"Error updating lead status: {e}")
     
     def batch_update_statuses(self, updates: List[Dict]) -> int:
         """Batch update multiple message statuses.
