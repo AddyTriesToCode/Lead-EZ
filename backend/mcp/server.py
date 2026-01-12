@@ -14,9 +14,11 @@ This server is designed to be called by n8n workflows.
 """
 
 from typing import Dict, List, Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
+import json
 from datetime import datetime
 from ..core.logger import logger
 from ..core.config import settings
@@ -25,6 +27,7 @@ from ..services.lead_generator import LeadGenerator
 from ..services.enricher import Enricher
 from ..services.message_generator import MessageGenerator
 from ..services.message_queue import get_message_queue
+from ..services.history_manager import HistoryManager
 from ..models.lead import Lead
 from ..agent.decision_engine import AgentDecisionEngine
 
@@ -35,9 +38,9 @@ from ..agent.decision_engine import AgentDecisionEngine
 # ============================================================================
 
 class GenerateLeadsRequest(BaseModel):
-    count: int = 200
+    count: int = None
     save_to_db: bool = True
-    seed: Optional[int] = 42  # Reproducible random seed
+    seed: Optional[int] = None  # Random seed for reproducibility (auto-generated if not provided)
 
 
 class EnrichLeadsRequest(BaseModel):
@@ -77,6 +80,15 @@ app = FastAPI(
     title="Lead-EZ MCP Server",
     description="Model Context Protocol server for lead generation pipeline",
     version="1.0.0"
+)
+
+# Enable CORS for frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -152,9 +164,13 @@ async def list_tools():
 async def generate_leads(request: GenerateLeadsRequest):
     """Generate new leads."""
     try:
-        logger.info(f"MCP Tool: generate_leads (count={request.count}, seed={request.seed})")
+        # Generate random seed if not provided
+        import random
+        seed_value = request.seed if request.seed is not None else random.randint(1, 9999)
         
-        generator = LeadGenerator(seed=request.seed)
+        logger.info(f"MCP Tool: generate_leads (count={request.count}, seed={seed_value})")
+        
+        generator = LeadGenerator(seed=seed_value)
         
         if request.save_to_db:
             result = generator.generate_and_save(request.count)
@@ -558,6 +574,345 @@ async def get_stats():
     
     except Exception as e:
         logger.error(f"Error in get_stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/webhooks/sendgrid")
+async def sendgrid_webhook(request: Request):
+    """Handle SendGrid webhook events (bounce, dropped, spam report)."""
+    try:
+        events = await request.json()
+        logger.info(f"Received {len(events)} SendGrid webhook events")
+        
+        processed = 0
+        for event in events:
+            event_type = event.get("event")
+            email = event.get("email")
+            message_id_header = event.get("message_id")  # SendGrid's message ID
+            reason = event.get("reason", "")
+            
+            # Handle bounce/dropped/spam report events
+            if event_type in ["bounce", "dropped", "spamreport"]:
+                logger.warning(f"Email {event_type} for {email}: {reason}")
+                
+                # Find message by recipient email
+                with get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    
+                    # Find the most recent SENT message for this email
+                    cursor.execute("""
+                        SELECT m.id, m.lead_id 
+                        FROM messages m
+                        JOIN leads l ON m.lead_id = l.id
+                        WHERE l.email = ? AND m.status = 'SENT' AND m.channel = 'email'
+                        ORDER BY m.sent_at DESC
+                        LIMIT 1
+                    """, (email,))
+                    
+                    message = cursor.fetchone()
+                    
+                    if message:
+                        msg_id = message["id"]
+                        lead_id = message["lead_id"]
+                        
+                        # Update message status to BOUNCED
+                        cursor.execute("""
+                            UPDATE messages 
+                            SET status = 'BOUNCED', error_message = ?
+                            WHERE id = ?
+                        """, (f"{event_type}: {reason}", msg_id))
+                        
+                        # Check if all messages for this lead have bounced
+                        cursor.execute("""
+                            SELECT COUNT(*) as total,
+                                   SUM(CASE WHEN status = 'BOUNCED' THEN 1 ELSE 0 END) as bounced
+                            FROM messages
+                            WHERE lead_id = ? AND channel = 'email'
+                        """, (lead_id,))
+                        
+                        stats = cursor.fetchone()
+                        
+                        # If all email messages bounced, mark lead as UNCONTACTED
+                        if stats["total"] == stats["bounced"]:
+                            cursor.execute("""
+                                UPDATE leads 
+                                SET status = 'UNCONTACTED', updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ?
+                            """, (lead_id,))
+                            logger.info(f"Lead {lead_id} marked as UNCONTACTED (all messages bounced)")
+                        
+                        conn.commit()
+                        processed += 1
+                        logger.info(f"Message {msg_id} marked as BOUNCED")
+                    else:
+                        logger.warning(f"No SENT message found for bounced email: {email}")
+            
+            elif event_type == "delivered":
+                # Confirmation that email was actually delivered
+                logger.info(f"Email delivered to {email}")
+        
+        return {
+            "success": True,
+            "processed": processed,
+            "total_events": len(events)
+        }
+    
+    except Exception as e:
+        logger.error(f"Error processing SendGrid webhook: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/tools/run_pipeline")
+async def run_pipeline(request: dict = None):
+    """Run the entire pipeline from start to finish.
+    
+    This endpoint executes all pipeline stages sequentially:
+    1. Generate leads
+    2. Enrich leads
+    3. Generate messages
+    4. Review messages
+    5. Send messages (if not dry run)
+    6. Archive to history
+    """
+    try:
+        # Extract configuration parameters from request
+        config = request or {}
+        lead_count = int(config.get("leadCount", 100))
+        seed = int(config.get("seed")) if config.get("seed") else None
+        enrichment_mode = config.get("enrichmentMode", "offline")
+        
+        # Get or generate pipeline_run_id
+        pipeline_run_id = config.get("pipelineRunId")
+        if not pipeline_run_id:
+            import uuid
+            pipeline_run_id = f"run_{int(__import__('time').time() * 1000)}_{str(uuid.uuid4())[:8]}"
+        
+        # Handle dryRun as boolean (could be string "true"/"false" or bool)
+        dry_run_value = config.get("dryRun", True)
+        if isinstance(dry_run_value, str):
+            dry_run = dry_run_value.lower() in ("true", "1", "yes")
+        else:
+            dry_run = bool(dry_run_value)
+        
+        logger.info(f"MCP Tool: run_pipeline - Starting pipeline {pipeline_run_id} (leadCount={lead_count}, seed={seed}, mode={enrichment_mode}, dryRun={dry_run})")
+        
+        # Clear working tables at start of new pipeline run
+        logger.info("Clearing working tables for new pipeline run...")
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM messages")
+            cursor.execute("DELETE FROM leads")
+            conn.commit()
+        
+        # Track results from each stage
+        pipeline_results = {
+            "generate_leads": None,
+            "enrich_leads": None,
+            "generate_messages": None,
+            "review_messages": None,
+            "send_messages": None
+        }
+        
+        # Stage 1: Generate leads
+        logger.info(f"Stage 1/5: Generating {lead_count} leads...")
+        pipeline_results["generate_leads"] = await generate_leads(GenerateLeadsRequest(
+            count=lead_count,
+            seed=seed,
+            save_to_db=True
+        ))
+        
+        # Stage 2: Enrich leads
+        logger.info("Stage 2/5: Enriching leads...")
+        pipeline_results["enrich_leads"] = await enrich_leads(EnrichLeadsRequest(
+            mode=enrichment_mode,
+            limit=lead_count  # Enrich all the leads we just generated
+        ))
+        
+        # Stage 3: Generate messages
+        logger.info("Stage 3/5: Generating messages...")
+        pipeline_results["generate_messages"] = await generate_messages(GenerateMessagesRequest(
+            limit=lead_count,  # Generate messages for all enriched leads
+            min_confidence_score=60
+        ))
+        
+        # Stage 4: Review messages
+        logger.info("Stage 4/5: Reviewing messages...")
+        pipeline_results["review_messages"] = await review_messages(ReviewMessagesRequest())
+        
+        # Stage 5: Send messages (only if not dry run)
+        if not dry_run:
+            logger.info("Stage 5/5: Sending messages...")
+            pipeline_results["send_messages"] = await send_messages(SendMessagesRequest(
+                use_queue=True,
+                batch_size=50,
+                dry_run=False
+            ))
+        else:
+            logger.info("Stage 5/5: Skipping send (dry run mode)")
+            pipeline_results["send_messages"] = {
+                "success": True,
+                "message": "Skipped sending - dry run mode enabled"
+            }
+        
+        logger.info(f"Pipeline {pipeline_run_id} completed successfully!")
+        
+        # Archive data to history and clear working tables
+        logger.info(f"Archiving pipeline {pipeline_run_id} to history...")
+        archive_result = HistoryManager.archive_pipeline_run(
+            pipeline_run_id=pipeline_run_id,
+            dry_run=dry_run
+        )
+        
+        if archive_result["success"]:
+            logger.info(f"Successfully archived {archive_result['archived_records']} records to history")
+            logger.info(f"Cleared {archive_result['deleted_leads']} leads and {archive_result['deleted_messages']} messages")
+        else:
+            logger.error(f"Failed to archive data: {archive_result.get('error')}")
+        
+        return {
+            "success": True,
+            "message": "Pipeline completed all stages",
+            "config": {
+                "leadCount": lead_count,
+                "seed": seed,
+                "enrichmentMode": enrichment_mode,
+                "dryRun": dry_run
+            },
+            "results": pipeline_results,
+            "archive": archive_result,
+            "pipeline_run_id": pipeline_run_id,
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    except Exception as e:
+        logger.error(f"Error in run_pipeline: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/tools/archive_pipeline")
+async def archive_pipeline(request: dict = None):
+    """Archive current pipeline data to history and clear working tables."""
+    try:
+        config = request or {}
+        pipeline_run_id = config.get("pipeline_run_id", str(__import__('uuid').uuid4()))
+        dry_run = config.get("dry_run", True)
+        
+        logger.info(f"Archiving pipeline run {pipeline_run_id}")
+        
+        result = HistoryManager.archive_pipeline_run(
+            pipeline_run_id=pipeline_run_id,
+            dry_run=dry_run
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in archive_pipeline: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/tools/get_history")
+async def get_history(pipeline_run_id: Optional[str] = None, limit: int = 100):
+    """Get history records, optionally filtered by pipeline run."""
+    try:
+        result = HistoryManager.get_history(pipeline_run_id=pipeline_run_id, limit=limit)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in get_history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/tools/get_pipeline_runs")
+async def get_pipeline_runs(limit: int = 50):
+    """Get list of all pipeline runs from history."""
+    try:
+        result = HistoryManager.get_pipeline_runs(limit=limit)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in get_pipeline_runs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/tools/clear_dry_run_messages")
+async def clear_dry_run_messages():
+    """Clear the dry run messages file."""
+    try:
+        from pathlib import Path
+        dry_run_file = Path("storage/messages/dry_run_messages.json")
+        
+        if dry_run_file.exists():
+            dry_run_file.unlink()
+            logger.info("Cleared dry run messages file")
+            return {
+                "success": True,
+                "message": "Dry run messages cleared"
+            }
+        else:
+            return {
+                "success": True,
+                "message": "No dry run messages file found"
+            }
+    except Exception as e:
+        logger.error(f"Error clearing dry run messages: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/tools/clear_working_tables")
+async def clear_working_tables():
+    """Clear leads and messages tables to start fresh pipeline run."""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Clear messages first (foreign key constraint)
+            cursor.execute("DELETE FROM messages")
+            deleted_messages = cursor.rowcount
+            
+            # Clear leads
+            cursor.execute("DELETE FROM leads")
+            deleted_leads = cursor.rowcount
+            
+            conn.commit()
+            
+        logger.info(f"Cleared working tables: {deleted_leads} leads, {deleted_messages} messages")
+        return {
+            "success": True,
+            "deleted_leads": deleted_leads,
+            "deleted_messages": deleted_messages
+        }
+    except Exception as e:
+        logger.error(f"Error clearing working tables: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/tools/get_dry_run_messages")
+async def get_dry_run_messages():
+    """Get all dry run messages from the storage file."""
+    try:
+        from pathlib import Path
+        dry_run_file = Path("storage/messages/dry_run_messages.json")
+        
+        if not dry_run_file.exists():
+            return {
+                "success": True,
+                "messages": [],
+                "count": 0
+            }
+        
+        with open(dry_run_file, "r", encoding="utf-8") as f:
+            messages = json.load(f)
+            if not isinstance(messages, list):
+                messages = []
+        
+        return {
+            "success": True,
+            "messages": messages,
+            "count": len(messages)
+        }
+    except Exception as e:
+        logger.error(f"Error reading dry run messages: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

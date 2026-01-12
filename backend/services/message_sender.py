@@ -23,10 +23,13 @@ class MessageSender:
         self.storage_path = Path("storage/messages")
         self.storage_path.mkdir(parents=True, exist_ok=True)
         
+        # Single file for all dry run messages
+        self.dry_run_file = self.storage_path / "dry_run_messages.json"
+        
         if not dry_run and settings.smtp_enabled:
             logger.info(f"MessageSender initialized in LIVE mode (SMTP: {settings.smtp_host}:{settings.smtp_port})")
         else:
-            logger.info(f"MessageSender initialized in DRY RUN mode (storage: {self.storage_path})")
+            logger.info(f"MessageSender initialized in DRY RUN mode (storage: {self.dry_run_file})")
     
     async def send_message(self, message: Dict) -> bool:
         """Send a message or save to storage.
@@ -54,21 +57,19 @@ class MessageSender:
             return False
     
     async def _save_to_storage(self, message: Dict) -> bool:
-        """Save message to storage file (dry-run mode).
+        """Save message to single JSON file (dry-run mode).
         
-        File format: storage/messages/{timestamp}_{channel}_{lead_name}.json
+        All approved messages are appended to storage/messages/dry_run_messages.json
         """
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            lead_name_safe = message["lead_name"].replace(" ", "_").replace("/", "_")
-            filename = f"{timestamp}_{message['channel']}_{message['variant']}_{lead_name_safe}.json"
-            filepath = self.storage_path / filename
             
             # Prepare message data for storage
             message_data = {
                 "message_id": message["id"],
                 "lead_id": message["lead_id"],
                 "timestamp": timestamp,
+                "saved_at": datetime.now().isoformat(),
                 "channel": message["channel"],
                 "variant": message["variant"],
                 "lead": {
@@ -81,11 +82,26 @@ class MessageSender:
                 "status": "DRY_RUN_SAVED"
             }
             
-            # Save to file
-            with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(message_data, f, indent=2, ensure_ascii=False)
+            # Load existing messages or create new list
+            if self.dry_run_file.exists():
+                with open(self.dry_run_file, "r", encoding="utf-8") as f:
+                    try:
+                        all_messages = json.load(f)
+                        if not isinstance(all_messages, list):
+                            all_messages = []
+                    except json.JSONDecodeError:
+                        all_messages = []
+            else:
+                all_messages = []
             
-            logger.info(f"[DRY RUN] Saved {message['channel']} message to {filename}")
+            # Append new message
+            all_messages.append(message_data)
+            
+            # Save back to file
+            with open(self.dry_run_file, "w", encoding="utf-8") as f:
+                json.dump(all_messages, f, indent=2, ensure_ascii=False)
+            
+            logger.info(f"[DRY RUN] Appended {message['channel']} message for {message['lead_name']} to {self.dry_run_file.name} (total: {len(all_messages)})")
             return True
             
         except Exception as e:
@@ -187,14 +203,23 @@ class MessageSender:
     
     def get_stats(self) -> Dict:
         """Get sender statistics."""
-        # Count files in storage
-        message_files = list(self.storage_path.glob("*.json"))
+        # Count messages in the single dry run file
+        stored_count = 0
+        if self.dry_run and self.dry_run_file.exists():
+            try:
+                with open(self.dry_run_file, "r", encoding="utf-8") as f:
+                    all_messages = json.load(f)
+                    if isinstance(all_messages, list):
+                        stored_count = len(all_messages)
+            except (json.JSONDecodeError, Exception):
+                stored_count = 0
         
         return {
             "mode": "dry_run" if self.dry_run else "live",
             "smtp_enabled": settings.smtp_enabled,
             "storage_path": str(self.storage_path),
-            "stored_messages": len(message_files)
+            "dry_run_file": str(self.dry_run_file) if self.dry_run else None,
+            "stored_messages": stored_count
         }
 
 

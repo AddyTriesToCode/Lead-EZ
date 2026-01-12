@@ -7,12 +7,12 @@ The agent examines lead/message status fields and determines which MCP tool
 endpoint to call next in the pipeline.
 
 PIPELINE STAGES:
-1. NEW -> generate_leads -> GENERATED
-2. GENERATED -> enrich_leads -> ENRICHED  
-3. ENRICHED -> generate_messages -> MESSAGED
-4. MESSAGED -> review_messages -> APPROVED/REJECTED
-5. APPROVED -> send_messages -> SENT
-6. FAILED -> retry logic
+1. NEW -> enrich_leads -> ENRICHED
+2. ENRICHED -> (stays ENRICHED while messages go through PENDING -> APPROVED -> SENT)
+3. ENRICHED + messages PENDING -> review_messages -> APPROVED
+4. ENRICHED + messages APPROVED -> send_messages -> CONTACTED (live) or stays ENRICHED (dry-run)
+5. CONTACTED -> track_responses (monitor engagement)
+6. UNCONTACTED -> (if all messages fail after retries)
 """
 
 from typing import Dict, List, Optional
@@ -22,14 +22,10 @@ from datetime import datetime
 class AgentDecisionEngine:
     """Decision engine that determines next action based on status."""
     
-    # Pipeline stage definitions
+    # Pipeline stage definitions - Lead statuses only
+    # Note: Message statuses (PENDING, APPROVED, SENT, FAILED) are separate
     STAGES = {
         "NEW": {
-            "next_action": "generate_leads",
-            "mcp_endpoint": "/tools/generate_leads",
-            "description": "Generate new leads"
-        },
-        "GENERATED": {
             "next_action": "enrich_leads",
             "mcp_endpoint": "/tools/enrich_leads",
             "description": "Enrich lead data with pain points and triggers"
@@ -37,24 +33,14 @@ class AgentDecisionEngine:
         "ENRICHED": {
             "next_action": "generate_messages",
             "mcp_endpoint": "/tools/generate_messages",
-            "description": "Generate 4 message variants per lead"
+            "description": "Generate 4 message variants per lead (lead stays ENRICHED)"
         },
-        "MESSAGED": {
-            "next_action": "review_messages",
-            "mcp_endpoint": "/tools/review_messages",
-            "description": "Review messages for quality and compliance"
-        },
-        "APPROVED": {
-            "next_action": "send_messages",
-            "mcp_endpoint": "/tools/send_messages",
-            "description": "Send approved messages via queue"
-        },
-        "SENT": {
+        "CONTACTED": {
             "next_action": "track_responses",
             "mcp_endpoint": "/tools/track_responses",
             "description": "Monitor for replies and engagement"
         },
-        "FAILED": {
+        "UNCONTACTED": {
             "next_action": "retry_or_escalate",
             "mcp_endpoint": "/tools/retry_failed",
             "description": "Retry failed messages or escalate"

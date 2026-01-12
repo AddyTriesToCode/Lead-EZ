@@ -49,7 +49,7 @@ class MessageQueue:
                 # Build query
                 query = """
                     SELECT m.id, m.lead_id, m.channel, m.variant, m.content, m.status,
-                           l.full_name, l.email, l.company_name, l.role
+                           m.retry_count, l.full_name, l.email, l.company_name, l.role
                     FROM messages m
                     JOIN leads l ON m.lead_id = l.id
                     WHERE m.status = ?
@@ -75,6 +75,7 @@ class MessageQueue:
                         "variant": msg["variant"],
                         "content": msg["content"],
                         "status": msg["status"],
+                        "retry_count": msg["retry_count"],
                         "lead_name": msg["full_name"],
                         "lead_email": msg["email"],
                         "company": msg["company_name"],
@@ -160,31 +161,46 @@ class MessageQueue:
                     # Send message using sender module
                     success = await sender.send_message(message)
                     
-                    # Update message status (keep APPROVED in dry run mode)
+                    # Update message status based on mode
                     if dry_run:
-                        # In dry run mode, keep messages as APPROVED (don't change status)
+                        # In dry run mode, just save to storage, NO RETRY LOGIC
                         if success:
-                            logger.info(f"[DRY RUN] Message {message['id']} saved to storage, keeping status=APPROVED")
+                            # Mark as SENT in dry run to indicate it was processed
+                            self._update_message_status(message["id"], "SENT", error=None)
+                            sent += 1
+                            self.stats["total_sent"] += 1
+                            logger.info(f"[DRY RUN] Message {message['id']} saved to storage")
                         else:
-                            self._update_message_status(message["id"], "FAILED", error="Dry run save failed")
+                            # Even if storage save fails, mark as FAILED and move on (no retry)
+                            self._update_message_status(message["id"], "FAILED", error="Storage save failed")
+                            failed += 1
+                            self.stats["total_failed"] += 1
+                            logger.error(f"[DRY RUN] Failed to save message {message['id']} to storage, marked as FAILED")
                     else:
-                        # In live mode, update status to SENT or FAILED
-                        self._update_message_status(
-                            message["id"],
-                            "SENT" if success else "FAILED",
-                            error=None if success else "Delivery failed"
-                        )
-                        
-                        # Update lead status to SENT after first successful message (live mode only)
+                        # In live mode, implement retry logic
                         if success:
-                            self._update_lead_status(message["lead_id"], "SENT")
-                    
-                    if success:
-                        sent += 1
-                        self.stats["total_sent"] += 1
-                    else:
-                        failed += 1
-                        self.stats["total_failed"] += 1
+                            # Success: update message to SENT, lead to CONTACTED
+                            self._update_message_status(message["id"], "SENT", error=None)
+                            self._update_lead_status(message["lead_id"], "CONTACTED")
+                            sent += 1
+                            self.stats["total_sent"] += 1
+                            logger.info(f"[LIVE] Message {message['id']} sent successfully")
+                        else:
+                            # Failure: check retry count
+                            current_retry = message.get("retry_count", 0)
+                            if current_retry < settings.max_retries:
+                                # Keep status APPROVED for retry, increment retry count
+                                self._increment_retry_count(message["id"])
+                                logger.warning(f"[LIVE] Message {message['id']} failed, retry {current_retry + 1}/{settings.max_retries}")
+                                # Put message back in queue for retry
+                                self.queue.append(message)
+                            else:
+                                # Max retries exceeded: set message to FAILED, lead to UNCONTACTED
+                                self._update_message_status(message["id"], "FAILED", error="Max retries exceeded")
+                                self._update_lead_status(message["lead_id"], "UNCONTACTED")
+                                failed += 1
+                                self.stats["total_failed"] += 1
+                                logger.error(f"[LIVE] Message {message['id']} failed after {settings.max_retries} retries")
                     
                     # Rate limiting delay
                     await asyncio.sleep(delay_seconds)
@@ -246,6 +262,21 @@ class MessageQueue:
                 
         except Exception as e:
             logger.error(f"Error updating lead status: {e}")
+    
+    def _increment_retry_count(self, message_id: str):
+        """Increment retry count for a message (keeps status APPROVED)."""
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE messages 
+                    SET retry_count = retry_count + 1
+                    WHERE id = ?
+                """, (message_id,))
+                conn.commit()
+                
+        except Exception as e:
+            logger.error(f"Error incrementing retry count: {e}")
     
     def batch_update_statuses(self, updates: List[Dict]) -> int:
         """Batch update multiple message statuses.

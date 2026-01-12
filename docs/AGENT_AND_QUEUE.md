@@ -98,11 +98,18 @@ print(f"Sent: {result['sent']}, Failed: {result['failed']}")
 **Purpose:** Determine next MCP tool endpoint based on status
 
 **Decision Logic:**
+
+**Lead Statuses:**
 ```
-NEW         -> /tools/generate_leads
-GENERATED   -> /tools/enrich_leads
-ENRICHED    -> /tools/generate_messages
-MESSAGED    -> /tools/review_messages
+NEW         -> /tools/enrich_leads
+ENRICHED    -> /tools/generate_messages (lead stays ENRICHED)
+ENRICHED    -> (waits for messages to be reviewed/sent)
+CONTACTED   -> /tools/track_responses (live mode only)
+UNCONTACTED -> /tools/retry_failed (if all messages fail)
+```
+
+**Message Statuses:** (separate from lead statuses)
+```
 PENDING     -> /tools/review_messages
 APPROVED    -> /tools/send_messages
 SENT        -> complete
@@ -288,15 +295,16 @@ curl -X POST http://localhost:8001/tools/send_messages \
    ```json
    {
      "leads": {
-       "NEW": 0,
-       "GENERATED": 100,
+       "NEW": 100,
        "ENRICHED": 50,
-       "MESSAGED": 20
+       "CONTACTED": 20,
+       "UNCONTACTED": 5
      },
      "messages": {
        "PENDING": 80,
        "APPROVED": 0,
-       "SENT": 0
+       "SENT": 60,
+       "FAILED": 2
      }
    }
    ```
@@ -305,7 +313,7 @@ curl -X POST http://localhost:8001/tools/send_messages \
    - Priority 1: Send approved messages (APPROVED > 0)
    - Priority 2: Review pending messages (PENDING > 0)
    - Priority 3: Generate messages for enriched leads (ENRICHED > 0, confidence >= 55)
-   - Priority 4: Enrich generated leads (GENERATED > 0)
+   - Priority 4: Enrich new leads (NEW > 0)
    - Priority 5: Generate new leads (if low inventory)
    
    **Note:** Messages are only generated for leads with confidence score >= 55
@@ -467,11 +475,22 @@ asyncio.run(test_queue())
 ```python
 from backend.agent.decision_engine import AgentDecisionEngine
 
-# Test decisions
+# Test lead status decisions
 print(AgentDecisionEngine.decide_next_action("NEW"))
+# -> enrich_leads
+
 print(AgentDecisionEngine.decide_next_action("ENRICHED"))
-print(AgentDecisionEngine.decide_next_action("MESSAGED", "PENDING"))
-print(AgentDecisionEngine.decide_next_action("MESSAGED", "APPROVED"))
+# -> generate_messages
+
+# Test message status decisions (lead stays ENRICHED)
+print(AgentDecisionEngine.decide_next_action("ENRICHED", "PENDING"))
+# -> review_messages
+
+print(AgentDecisionEngine.decide_next_action("ENRICHED", "APPROVED"))
+# -> send_messages
+
+print(AgentDecisionEngine.decide_next_action("CONTACTED"))
+# -> track_responses
 ```
 
 ### Test MCP Server

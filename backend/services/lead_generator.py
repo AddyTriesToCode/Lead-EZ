@@ -25,7 +25,7 @@ class LeadGenerator:
     
     COUNTRIES = ["India", "USA", "UK", "Germany", "France", "Australia", "Netherlands", "Singapore"]
     
-    def __init__(self, seed: int = 42):
+    def __init__(self, seed: int):
         """Initialize generator with random seed for reproducibility."""
         Faker.seed(seed)
         self.fake = Faker()

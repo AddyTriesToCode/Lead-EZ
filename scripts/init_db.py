@@ -57,9 +57,37 @@ def init_database():
             completed_at TIMESTAMP
         );
         
+        CREATE TABLE IF NOT EXISTS history (
+            id TEXT PRIMARY KEY,
+            pipeline_run_id TEXT,
+            lead_id TEXT NOT NULL,
+            full_name TEXT NOT NULL,
+            company_name TEXT NOT NULL,
+            role TEXT NOT NULL,
+            industry TEXT NOT NULL,
+            website TEXT NOT NULL,
+            email TEXT NOT NULL,
+            linkedin_url TEXT NOT NULL,
+            country TEXT NOT NULL,
+            persona_tag TEXT,
+            pain_points TEXT,
+            buying_triggers TEXT,
+            confidence_score INTEGER,
+            message_id TEXT,
+            channel TEXT,
+            variant TEXT,
+            message_content TEXT,
+            message_status TEXT,
+            sent_at TIMESTAMP,
+            dry_run BOOLEAN,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        
         CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status);
         CREATE INDEX IF NOT EXISTS idx_messages_lead ON messages(lead_id);
         CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status);
+        CREATE INDEX IF NOT EXISTS idx_history_pipeline_run ON history(pipeline_run_id);
+        CREATE INDEX IF NOT EXISTS idx_history_email ON history(email);
     """)
     
     conn.commit()
