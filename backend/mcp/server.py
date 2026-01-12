@@ -540,6 +540,10 @@ async def get_stats():
             cursor.execute("SELECT COUNT(*) as total FROM messages")
             total_messages = cursor.fetchone()["total"]
             
+            # Leads above confidence threshold (>= 60)
+            cursor.execute("SELECT COUNT(*) as count FROM leads WHERE confidence_score >= 60")
+            leads_above_threshold = cursor.fetchone()["count"]
+            
             # Recent activity - last updated lead
             cursor.execute("""
                 SELECT updated_at, status FROM leads 
@@ -551,19 +555,26 @@ async def get_stats():
             # Queue stats
             queue = get_message_queue()
             queue_stats = queue.get_stats()
+            
+            # Calculate total approved (APPROVED + SENT, since SENT messages were previously approved)
+            total_approved = message_stats.get("APPROVED", 0) + message_stats.get("SENT", 0)
+            
+            # Calculate leads_enriched (ENRICHED + CONTACTED, since CONTACTED leads were previously enriched)
+            leads_enriched = lead_stats.get("ENRICHED", 0) + lead_stats.get("CONTACTED", 0)
         
         return {
             "success": True,
             "summary": {
                 "total_leads": total_leads,
-                "leads_enriched": lead_stats.get("ENRICHED", 0),
+                "leads_enriched": leads_enriched,
+                "leads_above_threshold": leads_above_threshold,
                 "total_messages": total_messages,
                 "messages_sent": message_stats.get("SENT", 0),
                 "messages_failed": message_stats.get("FAILED", 0),
                 "messages_pending": message_stats.get("PENDING", 0)
             },
             "leads": lead_stats,
-            "messages": message_stats,
+            "messages": {**message_stats, "APPROVED": total_approved},
             "queue": queue_stats,
             "last_activity": {
                 "timestamp": last_lead_update["updated_at"] if last_lead_update else None,
@@ -739,24 +750,25 @@ async def run_pipeline(request: dict = None):
         logger.info("Stage 4/5: Reviewing messages...")
         pipeline_results["review_messages"] = await review_messages(ReviewMessagesRequest())
         
-        # Stage 5: Send messages (only if not dry run)
-        if not dry_run:
-            logger.info("Stage 5/5: Sending messages...")
+        # Stage 5: Send messages (with appropriate mode)
+        if dry_run:
+            logger.info("Stage 5/5: Saving messages to JSON file (dry run mode)...")
             pipeline_results["send_messages"] = await send_messages(SendMessagesRequest(
                 use_queue=True,
                 batch_size=50,
-                dry_run=False
+                dry_run=True  # Save to storage/messages/dry_run_messages.json
             ))
         else:
-            logger.info("Stage 5/5: Skipping send (dry run mode)")
-            pipeline_results["send_messages"] = {
-                "success": True,
-                "message": "Skipped sending - dry run mode enabled"
-            }
+            logger.info("Stage 5/5: Sending messages via SMTP (live mode)...")
+            pipeline_results["send_messages"] = await send_messages(SendMessagesRequest(
+                use_queue=True,
+                batch_size=50,
+                dry_run=False  # Actually send via email/LinkedIn
+            ))
         
         logger.info(f"Pipeline {pipeline_run_id} completed successfully!")
         
-        # Archive data to history and clear working tables
+        # Archive data to history (working tables retained)
         logger.info(f"Archiving pipeline {pipeline_run_id} to history...")
         archive_result = HistoryManager.archive_pipeline_run(
             pipeline_run_id=pipeline_run_id,
@@ -764,8 +776,7 @@ async def run_pipeline(request: dict = None):
         )
         
         if archive_result["success"]:
-            logger.info(f"Successfully archived {archive_result['archived_records']} records to history")
-            logger.info(f"Cleared {archive_result['deleted_leads']} leads and {archive_result['deleted_messages']} messages")
+            logger.info(f"Successfully archived {archive_result['archived_records']} records to history (working tables retained)")
         else:
             logger.error(f"Failed to archive data: {archive_result.get('error')}")
         

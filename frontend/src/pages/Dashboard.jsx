@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react'
 import { api } from '../services/api'
-import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts'
 
 function Dashboard() {
   const [stats, setStats] = useState(null)
@@ -9,7 +8,7 @@ function Dashboard() {
   const [pipelineRunning, setPipelineRunning] = useState(false)
   const [lastPipelineRunId, setLastPipelineRunId] = useState(null)
   const [workflowSteps, setWorkflowSteps] = useState([])
-  const [numLeads, setNumLeads] = useState(100)
+  const [numLeads, setNumLeads] = useState('')
   const [seedValue, setSeedValue] = useState('')
   const [enrichmentMode, setEnrichmentMode] = useState('offline')
   const [dryRun, setDryRun] = useState(true)
@@ -39,11 +38,23 @@ function Dashboard() {
           const leads = new Set(records.map(r => r.lead_id))
           const sentMessages = records.filter(r => r.message_status === 'SENT')
           const approvedMessages = records.filter(r => r.message_status === 'APPROVED')
+          // Total approved = APPROVED + SENT (since SENT messages were previously approved)
+          const totalApproved = approvedMessages.length + sentMessages.length
+          
+          // Get unique leads with confidence scores from records
+          const leadsWithScores = new Map()
+          records.forEach(r => {
+            if (r.lead_id && r.confidence_score !== null && r.confidence_score !== undefined) {
+              leadsWithScores.set(r.lead_id, r.confidence_score)
+            }
+          })
+          const leadsAboveThreshold = Array.from(leadsWithScores.values()).filter(score => score >= 60).length
           
           setStats({
             summary: {
               total_leads: leads.size,
               leads_enriched: leads.size,
+              leads_above_threshold: leadsAboveThreshold,
               total_messages: records.length,
               messages_sent: sentMessages.length,
               messages_failed: 0,
@@ -52,7 +63,7 @@ function Dashboard() {
             leads: { ENRICHED: leads.size },
             messages: { 
               SENT: sentMessages.length,
-              APPROVED: approvedMessages.length
+              APPROVED: totalApproved
             },
             timestamp: new Date().toISOString(),
             from_history: true,
@@ -65,6 +76,7 @@ function Dashboard() {
             summary: {
               total_leads: 0,
               leads_enriched: 0,
+              leads_above_threshold: 0,
               total_messages: 0,
               messages_sent: 0,
               messages_failed: 0,
@@ -111,19 +123,14 @@ function Dashboard() {
   const getMetrics = () => {
     if (!stats) return null
 
+    // Lead metrics
     const totalLeads = stats.summary.total_leads || 0
     const leadsEnriched = stats.summary.leads_enriched || 0
+    const leadsAboveThreshold = stats.summary.leads_above_threshold || 0
     
-    // Count leads above confidence threshold (60)
-    const leadsAboveThreshold = stats.leads?.ENRICHED || 0
-    
-    // Total messages generated = 4 * leads above threshold (2 email + 2 LinkedIn variants per lead)
-    const totalMessages = leadsAboveThreshold * 4
-    
-    // Messages approved (APPROVED + SENT = total approved during pipeline)
-    const messagesApproved = (stats.messages?.APPROVED || 0) + (stats.messages?.SENT || 0)
-    
-    // Messages sent (count SENT status)
+    // Message metrics - use actual counts from database
+    const totalMessages = stats.summary.total_messages || 0
+    const messagesApproved = stats.messages?.APPROVED || 0
     const messagesSent = stats.messages?.SENT || 0
 
     return {
@@ -180,13 +187,60 @@ function Dashboard() {
     setLastPipelineRunId(pipelineRunId)
     setError(null)
     setWorkflowSteps([
-      { id: 1, name: 'n8n Agent Orchestration', status: 'active', icon: '🤖' },
-      { id: 2, name: 'Generate Leads', status: 'pending', icon: '👥' },
+      { id: 1, name: 'n8n Agent Orchestration', status: 'completed', icon: '🤖' },
+      { id: 2, name: 'Generate Leads', status: 'active', icon: '👥' },
       { id: 3, name: 'Enrich Leads', status: 'pending', icon: '✨' },
       { id: 4, name: 'Generate Messages', status: 'pending', icon: '✉️' },
       { id: 5, name: 'Review & Send', status: 'pending', icon: '🚀' },
       { id: 6, name: 'Archive to History', status: 'pending', icon: '💾' }
     ])
+
+    // Setup progress polling to update workflow steps
+    const progressInterval = setInterval(async () => {
+      try {
+        const currentStats = await api.getStats()
+        const totalLeads = currentStats.summary?.total_leads || 0
+        const leadsEnriched = currentStats.summary?.leads_enriched || 0
+        const totalMessages = currentStats.summary?.total_messages || 0
+        const messagesApproved = currentStats.messages?.APPROVED || 0
+        const messagesSent = currentStats.messages?.SENT || 0
+
+        setWorkflowSteps(prev => {
+          const updated = [...prev]
+          
+          // Step 1: n8n Orchestration - always completed when we start
+          updated[0].status = 'completed'
+          
+          // Step 2: Generate Leads
+          if (totalLeads > 0) {
+            updated[1].status = 'completed'
+            updated[2].status = 'active'
+          }
+          
+          // Step 3: Enrich Leads
+          if (leadsEnriched > 0) {
+            updated[2].status = 'completed'
+            updated[3].status = 'active'
+          }
+          
+          // Step 4: Generate Messages
+          if (totalMessages > 0) {
+            updated[3].status = 'completed'
+            updated[4].status = 'active'
+          }
+          
+          // Step 5: Review & Send
+          if (messagesApproved > 0 || messagesSent > 0) {
+            updated[4].status = 'completed'
+            updated[5].status = 'active'
+          }
+          
+          return updated
+        })
+      } catch (err) {
+        console.error('Error polling progress:', err)
+      }
+    }, 1000) // Poll every second
 
     try {
       console.log('🤖 Triggering n8n agent workflow orchestration...')
@@ -203,6 +257,9 @@ function Dashboard() {
       
       console.log('✅ n8n agent workflow completed:', result)
       
+      // Stop polling
+      clearInterval(progressInterval)
+      
       // Mark all steps as completed
       setWorkflowSteps(prev => prev.map((step) => ({ ...step, status: 'completed' })))
       
@@ -213,6 +270,10 @@ function Dashboard() {
       
     } catch (err) {
       console.error('Pipeline error:', err)
+      
+      // Stop polling on error
+      clearInterval(progressInterval)
+      
       const errorMsg = err.response?.data?.detail || err.message || 'Unknown error'
       
       // Check if it's an n8n connection error
@@ -278,43 +339,6 @@ function Dashboard() {
         </div>
       )}
 
-      {/* Pie Chart */}
-      {pieData.length > 0 && (
-        <div className="chart-section">
-          <h2>Pipeline Metrics Distribution</h2>
-          <ResponsiveContainer width="100%" height={400}>
-            <PieChart>
-              <Pie
-                data={pieData}
-                cx="50%"
-                cy="50%"
-                labelLine={false}
-                label={({ name, percentage }) => `${name}: ${percentage}%`}
-                outerRadius={120}
-                fill="#8884d8"
-                dataKey="value"
-              >
-                {pieData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
-                ))}
-              </Pie>
-              <Tooltip 
-                contentStyle={{ 
-                  background: '#1a1a1a', 
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  borderRadius: '8px',
-                  color: '#ffffff'
-                }}
-              />
-              <Legend 
-                wrapperStyle={{ color: '#ffffff' }}
-                iconType="circle"
-              />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-
       {/* Pipeline Control */}
       <div className="pipeline-section">
         <h2>Pipeline Control</h2>
@@ -330,11 +354,39 @@ function Dashboard() {
               min="1"
               max="250"
               value={numLeads}
-              onChange={(e) => setNumLeads(parseInt(e.target.value) || '')}
+              onChange={(e) => {
+                const value = e.target.value
+                if (value === '') {
+                  setNumLeads('')
+                } else {
+                  const num = parseInt(value)
+                  // Allow typing but validate on blur
+                  setNumLeads(num)
+                }
+              }}
+              onBlur={(e) => {
+                const value = e.target.value
+                if (value !== '') {
+                  const num = parseInt(value)
+                  // Clamp value between 1 and 250
+                  if (num < 1) {
+                    setNumLeads(1)
+                  } else if (num > 250) {
+                    setNumLeads(250)
+                  }
+                }
+              }}
               placeholder="Enter 1-250"
               disabled={pipelineRunning}
+              className={numLeads !== '' && (numLeads < 1 || numLeads > 250) ? 'input-error' : ''}
             />
             <span className="input-hint">Required: 1-250 leads</span>
+            {numLeads !== '' && numLeads < 1 && (
+              <span className="input-error-message">Value must be at least 1</span>
+            )}
+            {numLeads !== '' && numLeads > 250 && (
+              <span className="input-error-message">Value must not exceed 250</span>
+            )}
           </div>
 
           <div className="input-group">
@@ -451,26 +503,25 @@ function Dashboard() {
                 <div className="metric-sublabel">Saved to storage</div>
               </div>
               
-              <div className="progress-section">
-                <div className="progress-info">
-                  <span>Processing Messages</span>
-                  <span className="progress-percentage">
-                    {metrics.messagesApproved > 0 
-                      ? Math.round((metrics.messagesSent / metrics.messagesApproved) * 100) 
-                      : 0}%
-                  </span>
+              {/* Only show progress bar if not at 100% */}
+              {metrics.messagesApproved > 0 && metrics.messagesSent < metrics.messagesApproved && (
+                <div className="progress-section">
+                  <div className="progress-info">
+                    <span>Storing Messages</span>
+                    <span className="progress-percentage">
+                      {Math.round((metrics.messagesSent / metrics.messagesApproved) * 100)}%
+                    </span>
+                  </div>
+                  <div className="progress-bar">
+                    <div 
+                      className="progress-fill" 
+                      style={{
+                        width: `${(metrics.messagesSent / metrics.messagesApproved) * 100}%`
+                      }}
+                    ></div>
+                  </div>
                 </div>
-                <div className="progress-bar">
-                  <div 
-                    className="progress-fill" 
-                    style={{
-                      width: metrics.messagesApproved > 0 
-                        ? `${(metrics.messagesSent / metrics.messagesApproved) * 100}%` 
-                        : '0%'
-                    }}
-                  ></div>
-                </div>
-              </div>
+              )}
             </div>
           ) : (
             /* Live Mode - Show full metrics */

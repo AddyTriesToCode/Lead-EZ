@@ -32,11 +32,11 @@ class MessageQueue:
         }
         logger.info(f"MessageQueue initialized: batch_size={batch_size}, rate_limit={self.max_per_minute}/min")
     
-    def fetch_batch(self, status: str = "PENDING", channel: Optional[str] = None) -> int:
+    def fetch_batch(self, status: str = "APPROVED", channel: Optional[str] = None) -> int:
         """Fetch a batch of messages from database into the queue.
         
         Args:
-            status: Message status to fetch (default: PENDING)
+            status: Message status to fetch (default: APPROVED)
             channel: Optional channel filter (email or linkedin)
             
         Returns:
@@ -122,7 +122,11 @@ class MessageQueue:
         """
         if len(self.queue) < min_threshold:
             logger.debug(f"Queue below threshold ({len(self.queue)} < {min_threshold}), refilling...")
-            return self.fetch_batch()
+            fetched = self.fetch_batch()
+            # If fetch returned 0 messages, don't try to refill again
+            if fetched == 0:
+                logger.info("No more messages available to fetch, stopping auto-refill")
+            return fetched
         return 0
     
     async def process_with_rate_limit(self, dry_run: bool = True) -> Dict:
@@ -148,14 +152,32 @@ class MessageQueue:
         mode = "DRY RUN (saving to storage)" if dry_run else "LIVE (sending via SMTP)"
         logger.info(f"Starting message processing in {mode} (rate: {self.max_per_minute}/min, delay: {delay_seconds:.2f}s)")
         
+        # Track if there are more messages to fetch
+        no_more_messages = False
+        
+        # Track processed message IDs to avoid duplicates
+        processed_ids = set()
+        
         try:
             while not self.is_empty():
-                # Auto-refill if needed
-                self.auto_refill(min_threshold=10)
+                # Auto-refill if needed and if there are still messages available
+                if not no_more_messages:
+                    refilled = self.auto_refill(min_threshold=10)
+                    if refilled == 0:
+                        # No more messages in database, stop trying to refill
+                        no_more_messages = True
+                        logger.info("No more messages in database, will process remaining queue")
                 
                 message = self.get_next()
                 if not message:
                     break
+                
+                # Skip if already processed (防止重复)
+                if message["id"] in processed_ids:
+                    logger.warning(f"Skipping duplicate message {message['id']}")
+                    continue
+                
+                processed_ids.add(message["id"])
                 
                 try:
                     # Send message using sender module
@@ -244,6 +266,12 @@ class MessageQueue:
                     """, (status, datetime.now(), message_id))
                 
                 conn.commit()
+                
+                # Verify update succeeded
+                cursor.execute("SELECT status FROM messages WHERE id = ?", (message_id,))
+                result = cursor.fetchone()
+                if result and result["status"] != status:
+                    logger.error(f"Failed to update message {message_id} to status {status}, current status: {result['status']}")
                 
         except Exception as e:
             logger.error(f"Error updating message status: {e}")

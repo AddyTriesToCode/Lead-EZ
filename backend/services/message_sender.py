@@ -150,41 +150,59 @@ class MessageSender:
             return False
     
     async def _send_linkedin(self, message: Dict) -> bool:
-        """Send LinkedIn message (live mode).
+        """Save LinkedIn message to file for manual outreach.
         
-        TODO: Implement LinkedIn API or browser automation.
-        For now, this is a placeholder that saves to storage with TODO marker.
+        LinkedIn API integration requires OAuth and app setup.
+        For now, save messages to a file that can be used for:
+        1. Manual LinkedIn outreach
+        2. Integration with LinkedIn automation tools
+        3. Future LinkedIn API implementation
         """
-        logger.warning("LinkedIn sending not implemented yet, saving to storage instead")
-        
-        # Save with special marker
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        lead_name_safe = message["lead_name"].replace(" ", "_").replace("/", "_")
-        filename = f"{timestamp}_linkedin_TODO_{lead_name_safe}.json"
-        filepath = self.storage_path / filename
-        
-        message_data = {
-            "message_id": message["id"],
-            "lead_id": message["lead_id"],
-            "timestamp": timestamp,
-            "channel": "linkedin",
-            "variant": message["variant"],
-            "lead": {
-                "name": message["lead_name"],
-                "email": message.get("lead_email"),
-                "company": message.get("company"),
-                "role": message.get("role")
-            },
-            "content": message["content"],
-            "status": "PENDING_LINKEDIN_IMPLEMENTATION",
-            "note": "LinkedIn sending not implemented - manual action required"
-        }
-        
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(message_data, f, indent=2, ensure_ascii=False)
-        
-        logger.info(f"[LIVE] LinkedIn message saved to {filename} - manual sending required")
-        return True
+        try:
+            linkedin_file = self.storage_path / "linkedin_outreach.json"
+            
+            # Prepare message data
+            message_data = {
+                "message_id": message["id"],
+                "lead_id": message["lead_id"],
+                "timestamp": datetime.now().isoformat(),
+                "channel": "linkedin",
+                "variant": message["variant"],
+                "lead": {
+                    "name": message["lead_name"],
+                    "company": message.get("company"),
+                    "role": message.get("role"),
+                    "linkedin_url": message.get("linkedin_url", "Not available")
+                },
+                "content": message["content"],
+                "status": "READY_FOR_LINKEDIN_OUTREACH"
+            }
+            
+            # Load existing messages or create new list
+            if linkedin_file.exists():
+                with open(linkedin_file, "r", encoding="utf-8") as f:
+                    try:
+                        all_messages = json.load(f)
+                        if not isinstance(all_messages, list):
+                            all_messages = []
+                    except json.JSONDecodeError:
+                        all_messages = []
+            else:
+                all_messages = []
+            
+            # Append new message
+            all_messages.append(message_data)
+            
+            # Save back to file
+            with open(linkedin_file, "w", encoding="utf-8") as f:
+                json.dump(all_messages, f, indent=2, ensure_ascii=False)
+            
+            logger.info(f"[LIVE] Saved LinkedIn message for {message['lead_name']} to {linkedin_file.name} (total: {len(all_messages)})")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error saving LinkedIn message: {e}")
+            return False
     
     def _extract_subject(self, content: str) -> str:
         """Extract subject line from email content.
