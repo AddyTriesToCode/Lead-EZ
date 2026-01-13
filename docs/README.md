@@ -927,7 +927,7 @@ LOG_LEVEL=DEBUG
 - ✅ **Source code**: All components present and documented
 - ✅ **n8n workflow export**: `automation/n8n_agent_workflow.json`
 - ✅ **.env.example**: Template for configuration
-- ✅ **Demo video**: 5 minute demo video 
+- ✅ **Demo video**: 8 minute demo video 
 
 ### ✅ Bonus Features
 - ✅ Configurable personas and targeting: `backend/data/*.json`
