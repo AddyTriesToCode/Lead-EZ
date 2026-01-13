@@ -92,14 +92,14 @@ Lead-EZ is a complete lead generation and outreach automation system that demons
 
 ### Key Components
 
-| **Component** | **Technology**     | **Purpose**                                       |
-|               |                    |                                                   |
-| Orchestration | n8n                | Agent workflow engine with decision logic         |
-| MCP Server    | FastAPI            | Exposes tools for pipeline operations             |
-| Backend       | Python             | Business logic and services                       |
-| Database      | SQLite             | Persistent storage for leads,messages and history | 
-| Frontend      | React+Vite         | Real-time monitoring dashboard                    |
-| Message Queue | In-memory + SQLite | Rate-limited batch processing                     |
+| **Component** | **Technology**     | **Purpose**                                        |
+|---------------|--------------------|----------------------------------------------------|
+| Orchestration | n8n                | Agent workflow engine with decision logic          |
+| MCP Server    | FastAPI            | Exposes tools for pipeline operations              |
+| Backend       | Python             | Business logic and services                        |
+| Database      | SQLite             | Persistent storage for leads, messages and history |
+| Frontend      | React+Vite         | Real-time monitoring dashboard                     |
+| Message Queue | In-memory + SQLite | Rate-limited batch processing                      |
 
 ---
 
