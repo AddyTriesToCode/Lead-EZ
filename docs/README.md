@@ -810,5 +810,5 @@ LOG_LEVEL=DEBUG
 ### ✅ Bonus Features
 - ✅ Configurable personas and targeting: `backend/data/*.json`
 - ✅ Export leads/messages to CSV: `scripts/export_messages.py`
-- ⚠️ Unit tests: Test directories created, tests TODO
-- ❌ Streaming progress updates (WebSockets): Not implemented
+- ✅ Unit tests: `tests/unit`
+- ✅ Integration tests : `tests/integration`
