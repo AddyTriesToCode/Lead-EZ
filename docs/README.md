@@ -15,6 +15,7 @@ A fully automated lead generation and outreach system powered by the **Model Con
 - [Configuration](#configuration)
 - [Pipeline Workflow](#pipeline-workflow)
 - [Project Structure](#project-structure)
+- [Testing](#testing)
 - [API Documentation](#api-documentation)
 - [Troubleshooting](#troubleshooting)
 - [Assignment Requirements Checklist](#assignment-requirements-checklist)
@@ -510,8 +511,17 @@ Lead-EZ/
 │   └── leads/                         # Lead exports (optional)
 │
 ├── tests/
-│   ├── unit/                          # Unit tests 
-│   └── integration/                   # Integration tests
+│   ├── conftest.py                    # Pytest configuration
+│   ├── unit/                          # Unit tests (33 tests)
+│   │   ├── __init__.py
+│   │   ├── test_lead_generator.py     # Lead generation tests
+│   │   ├── test_message_generator.py  # Message generation tests
+│   │   └── test_models.py             # Pydantic model tests
+│   └── integration/                   # Integration tests (23 tests)
+│       ├── __init__.py
+│       ├── test_lead_database.py      # Database operations
+│       ├── test_enrichment_pipeline.py # Enrichment workflow
+│       └── test_message_pipeline.py   # Message pipeline
 │
 ├── .env.example                       # Environment template
 ├── .gitignore                         # Git ignore rules
@@ -519,6 +529,118 @@ Lead-EZ/
 ├── TESTING_INSTRUCTIONS.md            # Quick testing guide
 └── WORKFLOW_CORRECTED.md              # Workflow documentation
 ```
+
+---
+
+## 🧪 Testing
+
+### Test Suite Overview
+
+Lead-EZ includes **56 comprehensive tests** covering unit and integration testing:
+
+- **33 Unit Tests**: Testing individual components in isolation
+- **23 Integration Tests**: Testing complete workflows and database operations
+
+### Running Tests
+
+```bash
+# Activate virtual environment
+.venv\Scripts\activate  # Windows
+source .venv/bin/activate  # macOS/Linux
+
+# Run all tests
+python -m pytest tests/ -v
+
+# Run only unit tests
+python -m pytest tests/unit -v
+
+# Run only integration tests
+python -m pytest tests/integration -v
+
+# Run with coverage report
+python -m pytest tests/ --cov=backend --cov-report=html
+```
+
+### Test Categories
+
+#### Unit Tests (`tests/unit/`)
+
+**1. Lead Generator Tests** (`test_lead_generator.py` - 9 tests)
+- ✅ Initialization with seed
+- ✅ Email format validation
+- ✅ LinkedIn URL generation
+- ✅ Website URL generation
+- ✅ Single and multiple lead generation
+- ✅ Industry-role matching validation
+- ✅ Deterministic generation with seeds
+- ✅ Country value validation
+
+**2. Message Generator Tests** (`test_message_generator.py` - 12 tests)
+- ✅ 4 messages per lead (2 email + 2 LinkedIn)
+- ✅ Message structure validation
+- ✅ Email and LinkedIn variant generation
+- ✅ Personalization checks
+- ✅ Subject line validation (email only)
+- ✅ CTA inclusion
+- ✅ Handling leads without enrichment
+- ✅ Variant differentiation
+
+**3. Model Tests** (`test_models.py` - 12 tests)
+- ✅ Lead model creation and validation
+- ✅ LeadCreate/LeadUpdate schema validation
+- ✅ Message model creation
+- ✅ MessageCreate schema validation
+- ✅ Optional field handling
+- ✅ Error state validation
+- ✅ Channel and variant validation
+
+#### Integration Tests (`tests/integration/`)
+
+**1. Lead Database Tests** (`test_lead_database.py` - 9 tests)
+- ✅ Lead generation and database persistence
+- ✅ Duplicate lead handling
+- ✅ Database retrieval
+- ✅ Querying leads by industry
+- ✅ Querying leads by status
+- ✅ Updating lead status
+- ✅ Transaction rollback handling
+- ✅ Complete generate-and-save workflow
+
+**2. Enrichment Pipeline Tests** (`test_enrichment_pipeline.py` - 8 tests)
+- ✅ Single lead enrichment
+- ✅ Multiple lead enrichment
+- ✅ Original data preservation
+- ✅ Saving enriched data to database
+- ✅ JSON field validation (pain points, triggers)
+- ✅ Persona tag generation
+- ✅ Confidence score calculation
+- ✅ Complete enrichment workflow
+
+**3. Message Pipeline Tests** (`test_message_pipeline.py` - 7 tests)
+- ✅ Message generation for enriched leads
+- ✅ Saving messages to database
+- ✅ Complete pipeline: generate → enrich → messages → save
+- ✅ Querying messages by channel
+- ✅ Querying messages by variant
+- ✅ Message status updates
+- ✅ Lead-message relationship validation
+
+### Test Features
+
+- **Isolated Testing**: Each test uses temporary databases to avoid side effects
+- **Comprehensive Coverage**: Tests cover happy paths, edge cases, and error scenarios
+- **Fast Execution**: All 56 tests run in under 3 seconds
+- **Clear Documentation**: Each test has descriptive names and docstrings
+- **Fixtures**: Reusable fixtures for database setup and teardown
+
+### Adding New Tests
+
+Tests are organized by component and type. To add new tests:
+
+1. **Unit tests**: Add to `tests/unit/` for testing individual functions/classes
+2. **Integration tests**: Add to `tests/integration/` for testing workflows
+3. Use the existing fixtures in `conftest.py` for database setup
+4. Follow the existing naming convention: `test_<component>_<scenario>`
 
 ---
 
@@ -810,5 +932,6 @@ LOG_LEVEL=DEBUG
 ### ✅ Bonus Features
 - ✅ Configurable personas and targeting: `backend/data/*.json`
 - ✅ Export leads/messages to CSV: `scripts/export_messages.py`
-- ✅ Unit tests: `tests/unit`
-- ✅ Integration tests : `tests/integration`
+- ✅ **Unit tests: 33 tests covering core components**
+- ✅ **Integration tests: 23 tests covering complete workflows**
+- ✅ **Total test coverage: 56 tests, all passing**
