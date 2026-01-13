@@ -12,20 +12,8 @@ The Lead-EZ system uses **n8n** as the orchestration layer. The n8n workflow act
 
 ## Installation
 
-### Option 1: npm (Recommended)
-
 ```bash
 npm install -g n8n
-```
-
-### Option 2: Docker
-
-```bash
-docker run -it --rm \
-  --name n8n \
-  -p 5678:5678 \
-  -v ~/.n8n:/home/node/.n8n \
-  n8nio/n8n
 ```
 
 ---
@@ -248,16 +236,6 @@ python -m backend.mcp.server
 
 ---
 
-## Best Practices
-
-1. **Keep n8n running**: Use `pm2` or systemd for production
-2. **Monitor executions**: Check n8n dashboard regularly
-3. **Adjust intervals**: Don't run too frequently (default 5min is good)
-4. **Use dry-run first**: Test with `dry_run: true` before live mode
-5. **Set up error notifications**: Add email/Slack nodes for failures
-
----
-
 ## Production Deployment
 
 ### Using PM2
@@ -290,12 +268,5 @@ services:
 
 ---
 
-## Next Steps
 
-1. ✅ Install n8n
-2. ✅ Import workflow
-3. ✅ Test webhook
-4. ✅ Activate schedule
-5. ✅ Monitor executions
-
-For questions, see the [n8n documentation](https://docs.n8n.io/)
+For more, see the [n8n documentation](https://docs.n8n.io/)

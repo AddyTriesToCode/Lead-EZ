@@ -499,7 +499,7 @@ function Dashboard() {
             <div className="dry-run-metrics">
               <div className="metric-card primary">
                 <div className="metric-label">Messages Stored</div>
-                <div className="metric-value">{metrics.messagesSent}</div>
+                <div className="metric-value">{metrics.messagesSent}/{metrics.messagesApproved}</div>
                 <div className="metric-sublabel">Saved to storage</div>
               </div>
               
